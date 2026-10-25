@@ -1,0 +1,9 @@
+.git
+node_modules
+data
+dist
+.env
+*.sqlite*
+test-results
+playwright-report
+.screenshots

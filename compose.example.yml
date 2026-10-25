@@ -1,0 +1,17 @@
+services:
+  hub:
+    build: .
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set the HTTPS URL of your existing TLS reverse proxy}
+      DATA_DIR: /app/data
+      HOST: 0.0.0.0
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - hub-data:/app/data
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+volumes:
+  hub-data:
