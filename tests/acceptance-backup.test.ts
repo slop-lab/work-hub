@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { Hub } from '../application/orchestration/hub.ts';
+import { AuthStore } from '../application/api/auth-store.ts';
+import { drainIdle } from './acceptance-fixture.ts';
+
+test('AT-43 filesystem backup and restore preserve answers and authentication while reconciling the original ambiguous operation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'work-hub-backup-'));
+  const source = join(root, 'source');
+  const restoredDirectory = join(root, 'restored');
+  mkdirSync(source);
+  let now = Date.parse('2026-10-25T00:00:00.000Z');
+  const clock = { now: () => new Date(now) };
+  let hub = new Hub(join(source, 'hub.sqlite'), { clock });
+  let auth = new AuthStore(join(source, 'auth.sqlite'));
+  try {
+    const actor = hub.actorForUser('user-admin'); assert.ok(actor);
+    const token = auth.bootstrap(actor.id);
+    const request = await hub.execute(actor, { commandId: 'backup-question', type: 'request.create', payload: { kind: 'question', projectId: 'project-default', recipient: { kind: 'project_members', projectId: 'project-default' }, prompt: 'Preserve this decision across restore', referenceIds: [], answerSchema: { kind: 'text', minLength: 1, maxLength: 200 }, blocking: 'none', validity: { kind: 'project', projectId: 'project-default' } } });
+    const requestId = request.objectRefs[0]?.id; assert.ok(requestId);
+    const answer = await hub.execute(actor, { commandId: 'backup-answer', type: 'request.respond', target: { kind: 'request', id: requestId }, expected: { request: 1 }, payload: { answer: { kind: 'text', text: 'Keep the accepted answer.' } } });
+    const responseId = answer.objectRefs[0]?.id; assert.ok(responseId);
+    const task = await hub.execute(actor, { commandId: 'backup-task', type: 'task.create', payload: { projectId: 'project-default', title: 'Restore ambiguous opening' } });
+    const taskId = task.objectRefs[0]?.id; assert.ok(taskId);
+    assert.ok(hub.simulator);
+    hub.simulator.controls.scriptNext('runtime.openSession', { kind: 'unknown_after_effect' });
+    await hub.execute(actor, { commandId: 'backup-delegate', type: 'attempt.delegate', target: { kind: 'task', id: taskId }, expected: { task: 1, profile: 1 }, payload: { profileId: 'profile-structured', environment: { mode: 'none' }, selectedReferenceIds: [], selectedResponseIds: [] } });
+    await hub.drain({ limit: 1 });
+    const operationId = hub.snapshot(actor).operations?.find((operation) => operation['status'] === 'unknown')?.['id'];
+    assert.equal(typeof operationId, 'string');
+    assert.equal(hub.exportRecords(actor).includes(token), false);
+    hub.close(); auth.close();
+    cpSync(source, restoredDirectory, { recursive: true });
+    hub = new Hub(join(restoredDirectory, 'hub.sqlite'), { clock });
+    auth = new AuthStore(join(restoredDirectory, 'auth.sqlite'));
+    assert.equal(auth.authenticate(token)?.userId, actor.id);
+    assert.equal(hub.getRequest(actor, requestId).status, 'answered');
+    assert.equal(hub.snapshot(actor).responses?.[0]?.['id'], responseId);
+    assert.equal(hub.simulator?.calls.list().filter((call) => call.operationKind === 'runtime.openSession').length, 1);
+    now += 600_000;
+    await hub.reconcile();
+    await drainIdle(hub);
+    assert.equal(hub.simulator?.calls.list().filter((call) => call.operationKind === 'runtime.openSession').length, 1);
+    assert.equal(hub.snapshot(actor).operations?.find((operation) => operation['id'] === operationId)?.['status'], 'confirmed');
+    assert.equal(hub.snapshot(actor).responses?.length, 1);
+  } finally { hub.close(); auth.close(); rmSync(root, { recursive: true }); }
+});
