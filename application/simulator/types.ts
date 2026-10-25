@@ -49,6 +49,7 @@ export type SimulatedTermination = z.infer<typeof SimulatedTerminationSchema>;
 export const SimulatedSessionSeedSchema = z.strictObject({
   hubSessionId: z.string().min(1), nativeSession: NativeRefSchema.optional(), controlMode: z.enum(["observe", "control"]),
   phase: z.enum(["idle", "running", "waiting_input", "ended", "unknown"]), hubAttemptId: z.string().optional(),
+  nativeExecutionRef: NativeRefSchema.optional(),
   history: z.enum(["complete_available", "partial", "live_only", "unavailable"]).optional(),
 });
 export type SimulatedSessionSeed = z.infer<typeof SimulatedSessionSeedSchema>;
@@ -64,7 +65,7 @@ export interface SimulatorControls {
   setRuntimeProfile(profile: RuntimeProfile): void;
   setSessionMissing(hubSessionId: string): void;
   addHistoryGap(hubSessionId: string, reason: string): void;
-  emitOutput(hubSessionId: string, text: string): void;
+  emitOutput(hubSessionId: string, text: string, hubAttemptId?: string): void;
   emitQuestion(input: SimulatedQuestion): void;
   emitResult(input: SimulatedResult): void;
   emitTermination(input: SimulatedTermination): void;

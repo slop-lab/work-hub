@@ -41,7 +41,7 @@ export function simulatorRoutes(options: { readonly hub: Hub; readonly actor: (c
         if (!attempt) throw forbidden('A termination observation must target an attempt.');
         simulator.controls.emitTermination({ hubSessionId: session.id, hubAttemptId: attempt.id, bindingGeneration: session.bindingGeneration, termination: control.outcome });
         break;
-      case 'output': simulator.controls.emitOutput(session.id, control.text); break;
+      case 'output': simulator.controls.emitOutput(session.id, control.text, attempt?.id); break;
       case 'gap': simulator.controls.addHistoryGap(session.id, control.reason); break;
       default: return assertNever(control);
     }

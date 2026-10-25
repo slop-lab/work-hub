@@ -10,15 +10,17 @@ const known = ['execution-sim', 'runtime-sim-structured', 'runtime-sim-limited']
 
 export class InstallationRepository {
   readonly store: Store;
-  constructor(store: Store) {
+  private readonly connectorAvailable: (kind: 'execution' | 'agent_runtime', id: string) => boolean;
+  constructor(store: Store, connectorAvailable: (kind: 'execution' | 'agent_runtime', id: string) => boolean = (_kind, id) => known.some((value) => value === id)) {
     this.store = store;
+    this.connectorAvailable = connectorAvailable;
     store.database.exec(`CREATE TABLE IF NOT EXISTS connector_installations (id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,label TEXT NOT NULL,revision INTEGER NOT NULL,kind TEXT NOT NULL,contract_major INTEGER NOT NULL,enabled INTEGER NOT NULL,implementation TEXT NOT NULL);`);
     for (const id of known) store.database.prepare(`INSERT OR IGNORE INTO connector_installations VALUES(?,?,?,1,?,1,1,?)`).run(id, 'workspace-default', id, id === 'execution-sim' ? 'execution' : 'agent_runtime', 'simulator');
   }
   list(actor: Actor) {
     return this.store.database.prepare('SELECT * FROM connector_installations WHERE workspace_id=? ORDER BY id').all(actor.workspaceId).map((raw) => {
       const row = rowSchema.parse(raw);
-      const available = row.contract_major === 1 && row.implementation === 'simulator' && known.some((id) => id === row.id);
+      const available = row.contract_major === 1 && this.connectorAvailable(row.kind, row.id);
       return { id: row.id, label: row.label, revision: row.revision, kind: row.kind, contractMajor: row.contract_major, enabled: row.enabled === 1, available, simulator: row.implementation === 'simulator', reason: available ? 'simulated_only' : row.contract_major !== 1 ? 'contract_major_mismatch' : 'connector_not_installed' };
     });
   }

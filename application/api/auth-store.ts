@@ -10,7 +10,7 @@ export const bridgeScopeSchema = z.strictObject({
   sessionId: z.string().min(1),
   attemptId: z.string().min(1),
   bindingGeneration: z.number().int().positive(),
-  allowedCommands: z.array(z.enum(['request.create', 'result.submit', 'attempt.report', 'bridge.response.ack'])).min(1),
+  allowedCommands: z.array(z.enum(['request.create', 'request.respond', 'result.submit', 'attempt.report', 'bridge.response.ack'])).min(1),
   expiresAt: z.iso.datetime(),
 });
 export type BridgeScope = z.infer<typeof bridgeScopeSchema>;

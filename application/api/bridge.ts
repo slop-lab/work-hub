@@ -17,11 +17,19 @@ function runtimeActor(context: Context<ApiEnvironment>): Actor {
 
 export function bridgeRoutes(hub: Hub) {
   const app = new Hono<ApiEnvironment>();
+  app.use('*', async (c, next) => {
+    hub.assertBridgeScope(runtimeScope(c));
+    await next();
+  });
   app.post('/commands', async (c) => {
     const scope = runtimeScope(c);
     const command = commandEnvelope.parse(await c.req.json<unknown>());
     if (!scope.allowedCommands.some((type) => type === command.type)) throw forbidden('This bridge token does not permit that command.');
-    if (command.target && (command.target.kind !== 'attempt' || command.target.id !== scope.attemptId)) throw forbidden('Bridge commands cannot select another target.');
+    if (command.type === 'request.respond') {
+      if (command.target?.kind !== 'request') throw forbidden('An answer must identify its scoped request.');
+      const request = hub.getRequest(runtimeActor(c), command.target.id);
+      if (request.recipient['kind'] !== 'agent_session' || request.recipient['sessionId'] !== scope.sessionId || request.sessionId !== scope.sessionId || request.attemptId !== scope.attemptId || request.bindingGeneration !== scope.bindingGeneration) throw forbidden('This request is outside the recipient credential scope.');
+    } else if (command.target && (command.target.kind !== 'attempt' || command.target.id !== scope.attemptId)) throw forbidden('Bridge commands cannot select another target.');
     const fields = { projectId: scope.projectId, taskId: scope.taskId, sessionId: scope.sessionId, attemptId: scope.attemptId, bindingGeneration: scope.bindingGeneration };
     for (const [field, expected] of Object.entries(fields)) {
       const provided = command.payload[field];
@@ -33,6 +41,11 @@ export function bridgeRoutes(hub: Hub) {
     if (command.type === 'result.submit' && !command.target) throw forbidden('A result must identify the authenticated attempt.');
     const receipt = await hub.execute(runtimeActor(c), command);
     return c.json(receipt, receipt.status === 'rejected' ? receipt.error?.category === 'authorization' ? 403 : 409 : receipt.status === 'accepted' ? 202 : 200);
+  });
+  app.get('/requests', (c) => {
+    const scope = runtimeScope(c);
+    const requests = hub.agentRequests(runtimeActor(c));
+    return c.json({ items: requests, bindingGeneration: scope.bindingGeneration });
   });
   app.get('/requests/:id', (c) => {
     const scope = runtimeScope(c);

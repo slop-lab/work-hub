@@ -34,7 +34,7 @@ export class PersistentSimulatorControls implements SimulatorControls {
   setRuntimeProfile(profile: Parameters<SimulatorControls["setRuntimeProfile"]>[0]): void { this.#store.setRuntimeProfile(profile); }
   setSessionMissing(hubSessionId: string): void { const session = this.#session(hubSessionId); this.#store.setState(`session:${hubSessionId}`, JSON.stringify({ ...session.state, missing: true })); }
   addHistoryGap(hubSessionId: string, reason: string): void { this.#store.setState(`gap:${hubSessionId}`, reason); }
-  emitOutput(hubSessionId: string, text: string): void { const value = z.string().max(65_536).parse(text); this.#store.addOutput(hubSessionId, { kind: "message", role: "agent", text: value, observedAt: this.#store.now() }); }
+  emitOutput(hubSessionId: string, text: string, hubAttemptId?: string): void { const value = z.string().max(65_536).parse(text); this.#store.addOutput(hubSessionId, { kind: "message", role: "agent", text: value, observedAt: this.#store.now(), ...(hubAttemptId === undefined ? {} : { hubAttemptId }) }); }
   emitQuestion(input: SimulatedQuestion): void {
     const value = SimulatedQuestionSchema.parse(input); const session = this.#session(value.hubSessionId); const observedAt = this.#store.now();
     this.#record(value.hubSessionId, { adminKind: "question", streamScope: value.hubSessionId, nativeSession: session.nativeSession, bindingGeneration: value.bindingGeneration, observedAt, requestId: value.requestId, attemptId: value.hubAttemptId, projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }), recipient: value.recipient, controlGrantRef: session.controlGrantId, prompt: value.prompt, responseRoute: value.responseRoute, blocking: value.blocking });
@@ -51,7 +51,7 @@ export class PersistentSimulatorControls implements SimulatorControls {
   seedSession(input: Parameters<SimulatorControls["seedSession"]>[0]): void {
     const value = SimulatedSessionSeedSchema.parse(input);
     const nativeSession = value.nativeSession ?? { installationId: "sim-runtime", providerScope: "simulated", kind: "agent-session", id: `native:${value.hubSessionId}`, incarnation: "v1" };
-    this.#store.setState(`session:${value.hubSessionId}`, JSON.stringify({ nativeSession, controlGrantId: `control:${value.hubSessionId}`, mode: value.controlMode, phase: value.phase, history: value.history ?? "partial", missing: false, ...(value.hubAttemptId === undefined ? {} : { attemptId: value.hubAttemptId }) }));
+    this.#store.setState(`session:${value.hubSessionId}`, JSON.stringify({ nativeSession, controlGrantId: `control:${value.hubSessionId}`, mode: value.controlMode, phase: value.phase, history: value.history ?? "partial", missing: false, ...(value.hubAttemptId === undefined ? {} : { attemptId: value.hubAttemptId }), ...(value.nativeExecutionRef === undefined ? {} : { nativeExecutionRef: value.nativeExecutionRef }) }));
   }
   setRuntimeReadiness(routeId: string, readiness: Parameters<SimulatorControls["setRuntimeReadiness"]>[1]): void { this.#store.setState(`readiness:${routeId}`, JSON.stringify(SimulatedReadinessSchema.parse(readiness))); }
   setReleaseResult(allocationId: string, result: Parameters<SimulatorControls["setReleaseResult"]>[1]): void { this.#store.setState(`release:${allocationId}`, JSON.stringify(SimulatedReleaseResultSchema.parse(result))); }

@@ -9,7 +9,7 @@ import { logger } from './logger.ts';
 import { queryRoutes } from './queries.ts';
 import { CursorError } from '../orchestration/pagination.ts';
 import { HubError } from '../domain/errors.ts';
-import { presentState, presentUser } from './presentation.ts';
+import { presentContext, presentState, presentUser } from './presentation.ts';
 import { commandEnvelope } from './command-envelope.ts';
 import { bridgeRoutes } from './bridge.ts';
 import { presentHistory } from './history.ts';
@@ -42,6 +42,12 @@ export function createApplication(options: ApplicationOptions) {
   app.get('/api/v1/state', (c) => {
     const current = actor(c);
     return c.json(presentState({ snapshot: hub.snapshot(current), actor: current, administration: hub.administration }));
+  });
+  app.get('/api/v1/context', (c) => {
+    const current = actor(c);
+    const query = z.strictObject({ route: z.enum(['dashboard', 'backlog', 'task', 'session', 'environments', 'settings', 'operation', 'showcase']), id: z.string().optional() }).parse(c.req.query());
+    const context = query.id === undefined ? { route: query.route } : { route: query.route, id: query.id };
+    return c.json(presentContext({ snapshot: hub.contextSnapshot(current, context), actor: current, administration: hub.administration }, context));
   });
   app.post('/api/v1/commands', async (c) => {
     const command = commandEnvelope.parse(await c.req.json<unknown>());

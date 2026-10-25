@@ -2,7 +2,8 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Actor, Hub } from '../orchestration/hub.ts';
 import type { ApiEnvironment } from './security.ts';
-import { presentOutput } from './history.ts';
+import { presentOperation, presentOutput } from './history.ts';
+import { presentTask } from './presentation.ts';
 
 const taskQuery = z.strictObject({
   q: z.string().max(4096).default(''),
@@ -23,14 +24,15 @@ export function queryRoutes({ hub, actor }: QueryOptions) {
   const app = new Hono<ApiEnvironment>();
   app.get('/tasks', (c) => {
     const query = taskQuery.parse(c.req.query());
-    return c.json(hub.listTasks(actor(c), {
+    const page = hub.listTasks(actor(c), {
       search: query.q, limit: query.limit, includeArchived: query.archived === 'true',
       ...(query.projectId ? { projectId: query.projectId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.ownerId ? { ownerId: query.ownerId } : {}),
       ...(query.priority === undefined ? {} : { priority: query.priority }),
       ...(query.after ? { cursor: query.after } : {}),
-    }));
+    });
+    return c.json({ ...page, items: page.items.map(presentTask) });
   });
   app.get('/dashboard', (c) => c.json(hub.snapshot(actor(c)).dashboard));
   app.get('/profiles', (c) => c.json({ items: hub.snapshot(actor(c)).profiles }));
@@ -43,8 +45,8 @@ export function queryRoutes({ hub, actor }: QueryOptions) {
     return c.json({ ...session, attempts: snapshot.attempts.filter((item) => item.sessionId === session.id), bindings: snapshot.environmentBindings.filter((item) => item.sessionId === session.id) });
   });
   app.get('/sessions/:id/output', (c) => {
-    const query = z.strictObject({ after: z.coerce.number().int().min(-2147483648).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(c.req.query());
-    const page = hub.getOutput(actor(c), c.req.param('id'), { after: query.after ?? -2147483648, limit: query.limit });
+    const query = z.strictObject({ attemptId: z.string().optional(), after: z.coerce.number().int().min(-2147483648).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(c.req.query());
+    const page = hub.getOutput(actor(c), c.req.param('id'), { ...(query.attemptId === undefined ? {} : { attemptId: query.attemptId }), after: query.after ?? -2147483648, limit: query.limit });
     const items = page.items.map(presentOutput);
     const gaps = items.filter((item) => item.kind === 'gap').map((item) => ({ reason: item.text ?? 'Retained output gap.' }));
     if (page.retainedBounds.gapCount > 0 && gaps.length === 0) gaps.push({ reason: 'Retained history contains a gap outside this page. Request the start of the retained range for its marker.' });
@@ -62,5 +64,6 @@ export function queryRoutes({ hub, actor }: QueryOptions) {
     const binding = snapshot.environmentBindings.find((item) => item.id === c.req.param('id'));
     return binding ? c.json(binding) : c.json({ error: { code: 'not_found' } }, 404);
   });
+  app.get('/operations/:id', (c) => c.json(presentOperation(hub.getOperation(actor(c), c.req.param('id')))));
   return app;
 }

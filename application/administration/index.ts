@@ -35,10 +35,10 @@ export class Administration {
   readonly installations: InstallationRepository;
   readonly profiles: ProfileRepository;
   readonly views: ViewStateRepository;
-  constructor(store: Store, options: { readonly runtimeSupports?: (installationId: string, names: readonly string[]) => boolean } = {}) {
+  constructor(store: Store, options: { readonly runtimeSupports?: (installationId: string, names: readonly string[]) => boolean; readonly connectorAvailable?: (kind: 'execution' | 'agent_runtime', id: string) => boolean } = {}) {
     this.users = new UserRepository(store);
     this.projects = new ProjectRepository(store);
-    this.installations = new InstallationRepository(store);
+    this.installations = new InstallationRepository(store, options.connectorAvailable);
     this.profiles = new ProfileRepository(store, this.installations, options.runtimeSupports);
     this.views = new ViewStateRepository(store);
   }

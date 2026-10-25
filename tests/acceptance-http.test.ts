@@ -46,6 +46,35 @@ test('HTTP command validation refuses impersonation and unknown core fields', as
   hub.close(); auth.close(); rmSync(directory, { recursive: true });
 });
 
+test('bounded browser context omits workspace task collections while task search paginates on the server', async () => {
+  // Given
+  const directory = mkdtempSync(join(tmpdir(), 'work-hub-http-context-'));
+  const auth = new AuthStore(':memory:');
+  const token = auth.bootstrap('user-admin');
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const hub = new Hub(join(directory, 'hub.sqlite'));
+  const app = createApplication({ hub, auth, origin: 'http://localhost:3000', secureCookies: false });
+  for (const title of ['Bounded alpha', 'Bounded beta', 'Bounded gamma']) {
+    const response = await app.request('/api/v1/commands', { method: 'POST', headers, body: JSON.stringify({ commandId: `create-${title}`, type: 'task.create', payload: { projectId: 'project-default', title } }) });
+    assert.equal(response.status, 200);
+  }
+
+  // When
+  const context = await app.request('/api/v1/context?route=backlog', { headers });
+  const first = await app.request('/api/v1/tasks?q=Bounded&limit=2', { headers });
+  const firstBody = z.object({ items: z.array(z.object({ title: z.string() })), nextCursor: z.string(), snapshotCursor: z.string() }).parse(await first.json());
+  const second = await app.request(`/api/v1/tasks?q=Bounded&limit=2&after=${encodeURIComponent(firstBody.nextCursor)}`, { headers });
+  const secondBody = z.object({ items: z.array(z.object({ title: z.string() })), snapshotCursor: z.string() }).parse(await second.json());
+
+  // Then
+  assert.equal(context.status, 200);
+  assert.deepEqual(z.object({ tasks: z.array(z.unknown()) }).parse(await context.json()).tasks, []);
+  assert.equal(firstBody.items.length, 2);
+  assert.equal(secondBody.items.length, 1);
+  assert.equal(new Set([...firstBody.items, ...secondBody.items].map((item) => item.title)).size, 3);
+  hub.close(); auth.close(); rmSync(directory, { recursive: true });
+});
+
 test('AT-02/24: another authenticated client reads a committed human answer after server restart, without external effects', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'work-hub-human-question-'));
   const path = join(directory, 'hub.sqlite');
