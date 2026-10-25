@@ -8,3 +8,4 @@ data/
 test-results/
 playwright-report/
 .screenshots/
+.playwright-mcp/
