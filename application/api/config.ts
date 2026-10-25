@@ -5,6 +5,7 @@ const configSchema = z.object({
   DATA_DIR: z.string().default('./data'),
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  WORKER_INTERVAL_MS: z.coerce.number().int().min(100).max(60000).default(500),
   PUBLIC_ORIGIN: z.url().optional(),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
@@ -18,6 +19,7 @@ export function loadConfig() {
     origin: value.PUBLIC_ORIGIN ?? `http://localhost:${value.PORT}`,
     secureCookies: value.PUBLIC_ORIGIN?.startsWith('https://') ?? false,
     production: value.NODE_ENV === 'production',
+    workerIntervalMs: value.WORKER_INTERVAL_MS,
   };
 }
 export class ConfigurationError extends Error {}
