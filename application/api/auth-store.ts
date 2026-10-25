@@ -3,16 +3,18 @@ import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 
 export const bridgeScopeSchema = z.strictObject({
+  workspaceId: z.string().min(1).default('workspace-default'),
   userId: z.string().min(1),
   projectId: z.string().min(1),
   taskId: z.string().min(1),
   sessionId: z.string().min(1),
   attemptId: z.string().min(1),
   bindingGeneration: z.number().int().positive(),
-  allowedCommands: z.array(z.enum(['request.create', 'result.submit', 'attempt.report'])).min(1),
+  allowedCommands: z.array(z.enum(['request.create', 'result.submit', 'attempt.report', 'bridge.response.ack'])).min(1),
   expiresAt: z.iso.datetime(),
 });
 export type BridgeScope = z.infer<typeof bridgeScopeSchema>;
+export type BridgeScopeInput = Readonly<Omit<z.input<typeof bridgeScopeSchema>, 'allowedCommands'>> & { readonly allowedCommands: readonly BridgeScope['allowedCommands'][number][] };
 const credentialSchema = z.object({
   user_id: z.string(),
   kind: z.enum(['user', 'browser', 'bridge']),
@@ -55,7 +57,7 @@ export class AuthStore {
   issueUser(userId: string): string {
     return this.issue({ userId, kind: 'user' });
   }
-  issueBridge(scope: BridgeScope): string {
+  issueBridge(scope: BridgeScopeInput): string {
     const parsed = bridgeScopeSchema.parse(scope);
     return this.issue({ userId: parsed.userId, kind: 'bridge', scope: parsed }, parsed.expiresAt);
   }
