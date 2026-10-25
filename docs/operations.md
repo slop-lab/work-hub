@@ -19,6 +19,22 @@ reusable tokens are never saved in browser storage. The authentication database 
 hashes, not plaintext credentials. Runtime credentials are a different principal
 class, bound to one task/session/attempt/generation and an explicit operation list.
 
+### Optional container packaging
+
+`Dockerfile` and `compose.example.yml` package only the hub service. They do not
+manage task environments or install a container engine. With an existing Docker
+installation and TLS reverse proxy, set `PUBLIC_ORIGIN`, then run:
+
+```sh
+docker compose -f compose.example.yml build
+docker compose -f compose.example.yml run --rm hub npm run bootstrap
+docker compose -f compose.example.yml up -d
+```
+
+The host port is bound to loopback for the existing reverse proxy. The named volume
+holds the entire private application data directory. Container packaging is an
+example; native Node deployment is the verified default in this implementation.
+
 ## Backup and restore
 
 1. Stop the hub service gracefully. This does **not** stop any external runtime or
@@ -63,3 +79,11 @@ logs carry identifiers, not task prompts, answer text, bearer tokens or provider
 secrets. Do not paste tokens into task text. Exports exclude authentication material,
 private locators and live route handles. Output retention creates explicit history
 gaps and never deletes canonical questions, answers or result summaries.
+
+Output defaults to a 1 MiB / 30-day budget per session. Configure
+`OUTPUT_RETENTION_BYTES` (64 KiB to 100 MiB) and `OUTPUT_RETENTION_DAYS` (1 to 3,650).
+Whole output chunks are removed; an explicit retained gap records the lost local
+sequence range and counts. References and human decisions are separate canonical
+records, not transcript fragments. Administrators can request immediate cleanup
+through the normal `retention.apply` command with `{maxBytes,maxAgeDays}`; it cannot
+release an environment or resolve a task.
