@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CursorError, paginate } from '../application/api/pagination.ts';
+import { CursorError, paginate } from '../application/orchestration/pagination.ts';
 
 test('keyset pagination stays query-scoped and does not duplicate an inserted earlier item', () => {
   const base = { items: ['b', 'c', 'd'], key: (value: string) => value, query: 'project=one', snapshot: '14', limit: 2 };
