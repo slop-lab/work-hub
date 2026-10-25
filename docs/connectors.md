@@ -64,3 +64,38 @@ Output and admin events share one monotonic per-session cursor. Subscription rep
 Run `npm run test:contracts`. The suite checks closed boundary schemas, serialized receipt dispatch, idempotency conflicts, restart reconciliation after a lost receipt, accepted/waiting and definite failures, partial release, stopped and weakly identified environments, incarnation replacement, external activity, attach-without-input, observe-only grants, limited capability refusal, history gaps, cursor replay, unknown stop responses, and missing native sessions.
 
 Passing simulator conformance demonstrates core contract behavior only. It is not evidence of compatibility with a live provider or runtime.
+
+## Configured modules and receipt association
+
+`HubOptions.connectors` supplies execution/runtime implementations keyed by
+installation ID. Installation availability comes from those configured modules
+and their validated v1 manifests/capabilities, not a provider-name allowlist.
+Administrative installation/profile records still control whether new work is
+enabled. Configuring a module does not make it a tested production integration.
+
+Mutating replies are checked against the requested operation ID, connector
+method, result schema and evidence effect. Native-session attachment preserves
+the exact selected native reference and route; response delivery must acknowledge
+the requested response. Read-only observations validate their source installation
+and typed value. Output and event cursors are separate opaque provider values;
+neither is inferred from output item IDs.
+
+The terminal/native-view extension has executable `SurfaceContextSchema`,
+`SurfaceChannelSchema` and `SurfaceViewSchema` contracts. No terminal gateway or
+live native surface is included. Interactive input replay remains forbidden.
+
+## Human-to-agent request inbox
+
+A human can address a question to an explicitly active session, attempt and
+binding generation. This persists a request; it does not launch work or inject
+an instruction. A runtime credential with `request.respond` can discover its
+open requests at `GET /api/v1/bridge/requests` and answer through
+`POST /api/v1/bridge/commands`, targeting the request with its expected revision
+and binding generation. The answer becomes an immutable canonical response.
+
+The inbox is bounded to 100 open requests in that exact credential scope. Ended
+attempts do not retain an actionable agent inbox. A runtime cannot answer a human
+recipient's question or approve its own action. Human-to-agent answers use
+`responseRoute: "none"`: they are saved to the Hub, not delivered back to the
+answering runtime. Agent-to-human responses retain the separate native or bridge
+delivery/acknowledgment workflow described by the contract.
