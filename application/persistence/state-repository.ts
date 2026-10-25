@@ -115,7 +115,7 @@ export class StateRepository {
 
   setAttemptPhase(workspaceId: string, attemptId: string, phase: AttemptPhase): void {
     this.database.prepare(`UPDATE attempts SET phase = ?, observation = 'fresh', updated_at = ?
-      WHERE workspace_id = ? AND id = ?`).run(
+      WHERE workspace_id = ? AND id = ? AND phase <> 'finished' AND unresolved = 1`).run(
       phase, this.clock.now().toISOString(), workspaceId, attemptId,
     );
   }
@@ -124,11 +124,12 @@ export class StateRepository {
     const now = this.clock.now().toISOString();
     const attempt = z.strictObject({
       taskId: z.string(), role: z.union([z.literal("primary"), z.literal("observed")]),
-      businessIntentEpoch: z.number(), hasResult: z.number(),
+      businessIntentEpoch: z.number(), hasResult: z.number(), phase: z.string(),
     }).parse(this.database.prepare(`SELECT a.task_id AS taskId, a.role,
-      a.business_intent_epoch AS businessIntentEpoch,
+      a.business_intent_epoch AS businessIntentEpoch, a.phase,
       EXISTS(SELECT 1 FROM results r WHERE r.attempt_id = a.id) AS hasResult
       FROM attempts a WHERE a.workspace_id = ? AND a.id = ?`).get(workspaceId, attemptId));
+    if (attempt.phase === "finished") return;
     const establishedOutcome = outcome === "ended_without_result" && attempt.hasResult === 1
       ? "result_submitted" : outcome;
     this.database.prepare(`UPDATE attempts SET phase = 'finished', outcome = ?,
@@ -152,11 +153,40 @@ export class StateRepository {
     this.runtime.bindRuntime(input);
   }
 
-  closeSession(workspaceId: string, sessionId: string): void {
+  closeSession(workspaceId: string, sessionId: string, observedAttemptId?: string): void {
+    const now = this.clock.now().toISOString();
+    if (observedAttemptId !== undefined) {
+      this.database.prepare(`UPDATE attempts SET observation = 'stale',
+        observation_ended_at = COALESCE(observation_ended_at, ?), updated_at = ?
+        WHERE workspace_id = ? AND session_id = ? AND id = ? AND role = 'observed'
+          AND unresolved = 1`).run(now, now, workspaceId, sessionId, observedAttemptId);
+    }
     this.database.prepare(`UPDATE sessions SET lifecycle = 'closed', revision = revision + 1,
       updated_at = ? WHERE workspace_id = ? AND id = ?`).run(
-      this.clock.now().toISOString(), workspaceId, sessionId,
+      now, workspaceId, sessionId,
     );
+  }
+
+  attemptCanReceiveInput(workspaceId: string, attemptId: string): boolean {
+    return this.database.prepare(`SELECT 1 FROM attempts WHERE workspace_id = ? AND id = ?
+      AND unresolved = 1 AND phase <> 'finished'`).get(workspaceId, attemptId) !== undefined;
+  }
+
+  saveAttemptNativeExecution(workspaceId: string, attemptId: string, nativeExecutionRef: object): void {
+    this.database.prepare(`UPDATE attempts SET native_execution_ref_json = ?, updated_at = ?
+      WHERE workspace_id = ? AND id = ? AND native_execution_ref_json IS NULL`).run(
+      JSON.stringify(nativeExecutionRef), this.clock.now().toISOString(), workspaceId, attemptId,
+    );
+  }
+
+  attemptNativeExecution(workspaceId: string, attemptId: string):
+    Readonly<Record<string, unknown>> | undefined {
+    const row = z.strictObject({ nativeExecutionRefJson: z.string().nullable() }).parse(
+      this.database.prepare(`SELECT native_execution_ref_json AS nativeExecutionRefJson
+        FROM attempts WHERE workspace_id = ? AND id = ?`).get(workspaceId, attemptId),
+    );
+    return row.nativeExecutionRefJson === null ? undefined
+      : z.record(z.string(), z.unknown()).parse(parseJson(row.nativeExecutionRefJson));
   }
 
   addReservation(input: {
@@ -209,8 +239,8 @@ export class StateRepository {
   saveEnvironmentAttachment(input: {
     readonly workspaceId: string; readonly bindingId: string; readonly attachment: object;
     readonly identity: object; readonly useGrant: object; readonly lifecycleGrant?: object;
-  }): void {
-    this.runtime.saveEnvironmentAttachment(input);
+  }): boolean {
+    return this.runtime.saveEnvironmentAttachment(input);
   }
 
   saveOutput(input: {
@@ -224,22 +254,11 @@ export class StateRepository {
     this.runtime.updateControlGrant(workspaceId, sessionId, descriptor);
   }
 
-  runtimeBindings(workspaceId?: string): readonly {
-    readonly workspaceId: string; readonly sessionId: string;
-    readonly generation: number; readonly descriptor: Readonly<Record<string, unknown>>;
-  }[] {
-    return this.runtime.runtimeBindings(workspaceId);
-  }
-
-  lastOutputCursor(sessionId: string): string | undefined {
-    return this.runtime.lastOutputCursor(sessionId);
-  }
-
   claimInboundEvent(input: {
     readonly workspaceId: string; readonly installationId: string;
     readonly sourceEventId: string; readonly bindingGeneration: number; readonly event: object;
-  }): boolean {
-    return this.runtime.claimInboundEvent(input);
+  }, apply: () => void = () => {}): boolean {
+    return this.runtime.claimInboundEvent(input, apply);
   }
 
   markSessionUnreachable(workspaceId: string, sessionId: string): void {

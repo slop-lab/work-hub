@@ -4,7 +4,10 @@ import { z } from "zod";
 import type { HubCommandReceipt } from "../domain/model.ts";
 import type { Clock } from "./codec.ts";
 import { newId, parseJson } from "./codec.ts";
+import { OutboxClaims, type OutboxItem } from "./outbox-claims.ts";
 import { OperationSettlement } from "./operation-settlement.ts";
+
+export type { OutboxItem } from "./outbox-claims.ts";
 
 const receiptSchema = z.strictObject({
   commandId: z.string(), actorId: z.string(),
@@ -36,47 +39,26 @@ const receiptSchema = z.strictObject({
   }).optional(),
 });
 
-export type OutboxItem = {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly operationId?: string;
-  readonly commandId: string;
-  readonly connectorKind: "execution" | "runtime";
-  readonly installationId: string;
-  readonly inputDigest: string;
-  readonly operationKind: string;
-  readonly targetId?: string;
-  readonly targetGeneration?: number;
-  readonly workType: string;
-  readonly payload: Readonly<Record<string, unknown>>;
-  readonly attempts: number;
-};
-
 export type OperationDescriptor = {
   readonly id: string; readonly workspaceId: string; readonly commandId: string;
   readonly connectorKind: "execution" | "runtime"; readonly installationId: string;
   readonly operationKind: string; readonly inputDigest: string;
+  readonly status: "accepted" | "running" | "confirmed" | "rejected" | "failed" | "unknown";
   readonly targetId?: string; readonly targetGeneration?: number;
   readonly payload: Readonly<Record<string, unknown>>;
 };
-
-const outboxRowSchema = z.strictObject({
-  id: z.string(), workspaceId: z.string(), operationId: z.string().nullable(),
-  commandId: z.string(), connectorKind: z.union([z.literal("execution"), z.literal("runtime")]),
-  installationId: z.string(), inputDigest: z.string(), operationKind: z.string(),
-  targetId: z.string().nullable(), targetGeneration: z.number().nullable(),
-  workType: z.string(), payloadJson: z.string(), attempts: z.number(),
-});
 
 export class OperationRepository {
   private readonly database: DatabaseSync;
   private readonly clock: Clock;
   private readonly settlement: OperationSettlement;
+  private readonly claims: OutboxClaims;
 
   constructor(database: DatabaseSync, clock: Clock) {
     this.database = database;
     this.clock = clock;
     this.settlement = new OperationSettlement(database, clock);
+    this.claims = new OutboxClaims(database, clock);
   }
 
   findReceipt(workspaceId: string, actorId: string, commandId: string): {
@@ -141,19 +123,22 @@ export class OperationRepository {
     const row = this.database.prepare(`SELECT id, workspace_id AS workspaceId,
       command_id AS commandId, connector_kind AS connectorKind,
       installation_id AS installationId, operation_kind AS operationKind,
-      input_digest AS inputDigest, target_id AS targetId,
+      input_digest AS inputDigest, status, target_id AS targetId,
       target_generation AS targetGeneration, input_json AS inputJson
       FROM external_operations WHERE workspace_id = ? AND id = ?`).get(workspaceId, id);
     const parsed = z.strictObject({
       id: z.string(), workspaceId: z.string(), commandId: z.string(),
       connectorKind: z.union([z.literal("execution"), z.literal("runtime")]),
       installationId: z.string(), operationKind: z.string(), inputDigest: z.string(),
+      status: z.union([z.literal("accepted"), z.literal("running"), z.literal("confirmed"),
+        z.literal("rejected"), z.literal("failed"), z.literal("unknown")]),
       targetId: z.string().nullable(), targetGeneration: z.number().nullable(), inputJson: z.string(),
     }).optional().parse(row);
     return parsed === undefined ? undefined : {
       id: parsed.id, workspaceId: parsed.workspaceId, commandId: parsed.commandId,
       connectorKind: parsed.connectorKind, installationId: parsed.installationId,
       operationKind: parsed.operationKind, inputDigest: parsed.inputDigest,
+      status: parsed.status,
       ...(parsed.targetId === null ? {} : { targetId: parsed.targetId }),
       ...(parsed.targetGeneration === null ? {} : { targetGeneration: parsed.targetGeneration }),
       payload: z.record(z.string(), z.unknown()).parse(parseJson(parsed.inputJson)),
@@ -173,6 +158,17 @@ export class OperationRepository {
     this.settlement.updateOperation(id, status, receipt);
   }
 
+  assertOwned(id: string): void {
+    this.settlement.assertOwned(id);
+  }
+
+  recordExpectedAttachment(id: string, input: {
+    readonly expectedIdentity: object;
+    readonly selectedUseGrantId: string;
+  }): void {
+    this.settlement.recordExpectedAttachment(id, input);
+  }
+
   settleReconciliation(input: {
     readonly originalOperationId: string; readonly reconciliationOutboxId: string;
     readonly status: "confirmed" | "rejected" | "failed" | "unknown";
@@ -181,31 +177,8 @@ export class OperationRepository {
     this.settlement.settleReconciliation(input);
   }
 
-  due(limit: number): readonly OutboxItem[] {
-    return this.database.prepare(`SELECT o.id, o.workspace_id AS workspaceId,
-      o.operation_id AS operationId, x.command_id AS commandId,
-      x.connector_kind AS connectorKind, x.installation_id AS installationId,
-      x.input_digest AS inputDigest, x.operation_kind AS operationKind, o.work_type AS workType,
-      x.target_id AS targetId, x.target_generation AS targetGeneration,
-      o.payload_json AS payloadJson, o.attempts
-      FROM outbox o JOIN external_operations x ON x.id = o.operation_id
-      WHERE o.state IN ('pending','unknown') AND o.next_due_at <= ?
-      ORDER BY o.next_due_at, o.id LIMIT ?`).all(this.clock.now().toISOString(), limit)
-      .map((row) => {
-        const value = outboxRowSchema.parse(row);
-        return {
-          id: value.id, workspaceId: value.workspaceId,
-          ...(value.operationId === null ? {} : { operationId: value.operationId }),
-          commandId: value.commandId, connectorKind: value.connectorKind,
-          installationId: value.installationId, inputDigest: value.inputDigest,
-          operationKind: value.operationKind,
-          ...(value.targetId === null ? {} : { targetId: value.targetId }),
-          ...(value.targetGeneration === null ? {} : { targetGeneration: value.targetGeneration }),
-          workType: value.workType,
-          payload: z.record(z.string(), z.unknown()).parse(parseJson(value.payloadJson)),
-          attempts: value.attempts,
-        };
-      });
+  claimDue(limit: number, leaseMilliseconds = 30_000): readonly OutboxItem[] {
+    return this.claims.claimDue(limit, leaseMilliseconds);
   }
 
   markOutbox(id: string, state: "done" | "pending" | "unknown", receipt?: object): void {

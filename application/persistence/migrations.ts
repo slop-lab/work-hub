@@ -1,5 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
+// allow: SIZE_OK — declarative SQLite schema and ordered additive migrations are reviewed together.
+
 const schema = `
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
@@ -94,6 +96,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   role TEXT NOT NULL, origin TEXT NOT NULL, phase TEXT NOT NULL, outcome TEXT,
   observation TEXT NOT NULL, input_snapshot_json TEXT NOT NULL,
   predecessor_id TEXT, unresolved INTEGER NOT NULL, stop_requested_at TEXT,
+  native_execution_ref_json TEXT, observation_ended_at TEXT,
   business_intent_epoch INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS attempts_task_primary_unique
@@ -145,7 +148,7 @@ CREATE INDEX IF NOT EXISTS operations_status_idx ON external_operations(workspac
 CREATE TABLE IF NOT EXISTS outbox (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, operation_id TEXT,
   work_type TEXT NOT NULL, payload_json TEXT NOT NULL, state TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0, lease_until TEXT, next_due_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0, lease_token TEXT, lease_until TEXT, next_due_at TEXT NOT NULL,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS outbox_due_idx ON outbox(state, next_due_at, id);
@@ -157,9 +160,11 @@ CREATE TABLE IF NOT EXISTS output_chunks (
 );
 CREATE TABLE IF NOT EXISTS inbound_events (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, installation_id TEXT NOT NULL,
+  stream_scope TEXT NOT NULL, native_session_key TEXT NOT NULL,
   source_event_id TEXT NOT NULL, binding_generation INTEGER NOT NULL,
   event_json TEXT NOT NULL, received_at TEXT NOT NULL,
-  UNIQUE(installation_id, source_event_id, binding_generation)
+  UNIQUE(workspace_id, installation_id, stream_scope, native_session_key,
+    source_event_id, binding_generation)
 );
 CREATE TABLE IF NOT EXISTS audit_entries (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL,
@@ -171,6 +176,39 @@ CREATE TABLE IF NOT EXISTS user_view_state (
   workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, attention_key TEXT NOT NULL,
   read_at TEXT, dismissed_at TEXT, PRIMARY KEY(workspace_id, user_id, attention_key)
 );
+CREATE TRIGGER IF NOT EXISTS expire_agent_requests_on_attempt_end
+AFTER UPDATE OF unresolved ON attempts
+WHEN OLD.unresolved = 1 AND NEW.unresolved = 0
+BEGIN
+  UPDATE deliveries SET status = 'suppressed',
+    last_error_json = '{"code":"recipient_unavailable"}', updated_at = NEW.updated_at
+    WHERE workspace_id = NEW.workspace_id AND status IN ('pending','unknown')
+      AND request_id IN (SELECT id FROM requests WHERE workspace_id = NEW.workspace_id
+        AND session_id = NEW.session_id AND attempt_id = NEW.id AND status = 'open'
+        AND json_extract(recipient_json, '$.kind') = 'agent_session'
+        AND json_extract(recipient_json, '$.sessionId') = NEW.session_id);
+  UPDATE requests SET revision = revision + 1, status = 'expired', updated_at = NEW.updated_at
+    WHERE workspace_id = NEW.workspace_id AND session_id = NEW.session_id
+      AND attempt_id = NEW.id AND status = 'open'
+      AND json_extract(recipient_json, '$.kind') = 'agent_session'
+      AND json_extract(recipient_json, '$.sessionId') = NEW.session_id;
+END;
+CREATE TRIGGER IF NOT EXISTS expire_agent_requests_on_session_close
+AFTER UPDATE OF lifecycle ON sessions
+WHEN OLD.lifecycle <> 'closed' AND NEW.lifecycle = 'closed'
+BEGIN
+  UPDATE deliveries SET status = 'suppressed',
+    last_error_json = '{"code":"recipient_unavailable"}', updated_at = NEW.updated_at
+    WHERE workspace_id = NEW.workspace_id AND status IN ('pending','unknown')
+      AND request_id IN (SELECT id FROM requests WHERE workspace_id = NEW.workspace_id
+        AND session_id = NEW.id AND status = 'open'
+        AND json_extract(recipient_json, '$.kind') = 'agent_session'
+        AND json_extract(recipient_json, '$.sessionId') = NEW.id);
+  UPDATE requests SET revision = revision + 1, status = 'expired', updated_at = NEW.updated_at
+    WHERE workspace_id = NEW.workspace_id AND session_id = NEW.id AND status = 'open'
+      AND json_extract(recipient_json, '$.kind') = 'agent_session'
+      AND json_extract(recipient_json, '$.sessionId') = NEW.id;
+END;
 `;
 
 export function migrate(database: DatabaseSync): void {
@@ -178,5 +216,53 @@ export function migrate(database: DatabaseSync): void {
   const columns = database.prepare("PRAGMA table_info(environment_registrations)").all();
   if (!columns.some((column) => Reflect.get(column, "name") === "verification_json")) {
     database.exec("ALTER TABLE environment_registrations ADD COLUMN verification_json TEXT");
+  }
+  const outboxColumns = database.prepare("PRAGMA table_info(outbox)").all();
+  if (!outboxColumns.some((column) => Reflect.get(column, "name") === "lease_token")) {
+    database.exec("ALTER TABLE outbox ADD COLUMN lease_token TEXT");
+  }
+  const inboundColumns = database.prepare("PRAGMA table_info(inbound_events)").all();
+  if (!inboundColumns.some((column) => Reflect.get(column, "name") === "stream_scope")) {
+    migrateInboundEvents(database);
+  }
+  const attemptColumns = database.prepare("PRAGMA table_info(attempts)").all();
+  if (!attemptColumns.some((column) => Reflect.get(column, "name") === "native_execution_ref_json")) {
+    database.exec("ALTER TABLE attempts ADD COLUMN native_execution_ref_json TEXT");
+  }
+  if (!attemptColumns.some((column) => Reflect.get(column, "name") === "observation_ended_at")) {
+    database.exec("ALTER TABLE attempts ADD COLUMN observation_ended_at TEXT");
+  }
+}
+
+function migrateInboundEvents(database: DatabaseSync): void {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.exec(`ALTER TABLE inbound_events RENAME TO inbound_events_legacy;
+      CREATE TABLE inbound_events (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, installation_id TEXT NOT NULL,
+        stream_scope TEXT NOT NULL, native_session_key TEXT NOT NULL,
+        source_event_id TEXT NOT NULL, binding_generation INTEGER NOT NULL,
+        event_json TEXT NOT NULL, received_at TEXT NOT NULL,
+        UNIQUE(workspace_id, installation_id, stream_scope, native_session_key,
+          source_event_id, binding_generation)
+      );
+      INSERT INTO inbound_events
+        (id, workspace_id, installation_id, stream_scope, native_session_key,
+         source_event_id, binding_generation, event_json, received_at)
+      SELECT id, workspace_id, installation_id,
+        COALESCE(json_extract(event_json, '$.streamScope'), ''),
+        json_object(
+          'installationId', json_extract(event_json, '$.nativeSession.installationId'),
+          'providerScope', json_extract(event_json, '$.nativeSession.providerScope'),
+          'kind', json_extract(event_json, '$.nativeSession.kind'),
+          'id', json_extract(event_json, '$.nativeSession.id'),
+          'incarnation', json_extract(event_json, '$.nativeSession.incarnation')
+        ), source_event_id, binding_generation, event_json, received_at
+      FROM inbound_events_legacy;
+      DROP TABLE inbound_events_legacy;`);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
   }
 }

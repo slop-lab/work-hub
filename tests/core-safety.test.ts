@@ -7,6 +7,7 @@ import test from "node:test";
 import { Hub, type Actor } from "../application/orchestration/hub.ts";
 import { Store } from "../application/persistence/database.ts";
 import { OperationRepository } from "../application/persistence/operation-repository.ts";
+import { withOutboxLease } from "../application/persistence/outbox-lease.ts";
 import { StateRepository } from "../application/persistence/state-repository.ts";
 import { verifiedExistingTarget } from "../application/orchestration/environment-safety.ts";
 import { NativeRefSchema } from "../application/contracts/index.ts";
@@ -168,11 +169,13 @@ test("operation rejection remains rejected when its outbox work is terminal", as
     connectorKind: "runtime", installationId: "runtime-sim-structured", stage: "send_instruction",
     targetId: "attempt-x", payload: {}, inputDigest: "sha256:test",
   });
-  const item = operations.due(1)[0];
+  const item = operations.claimDue(1)[0];
   assert.ok(item);
 
   // When
-  operations.markOutbox(item.id, "done", { status: "rejected", code: "denied" });
+  withOutboxLease(item, () => operations.markOutbox(
+    item.id, "done", { status: "rejected", code: "denied" },
+  ));
 
   // Then
   const row = store.database.prepare("SELECT status FROM external_operations WHERE id = ?")
