@@ -10,11 +10,13 @@ export type { RuntimeProfile, ScriptedOutcome, SimulatedEnvironment, SimulatedQu
 
 export function createSimulators(path: string, options: { readonly runtimeProfile?: RuntimeProfile } = {}): Simulators {
   const store = new SimulatorStore(`${path}.sim`);
+  const execution = new SimulatedExecutionConnector(store);
   if (options.runtimeProfile !== undefined) store.setRuntimeProfile(options.runtimeProfile);
   return {
-    execution: new SimulatedExecutionConnector(store),
+    execution,
     runtime: new SimulatedRuntimeConnector(store),
-    controls: new PersistentSimulatorControls(store),
+    runtimeFor: (profile) => new SimulatedRuntimeConnector(store, profile),
+    controls: new PersistentSimulatorControls(store, execution),
     calls: { list: () => store.listCalls() },
     close: () => store.close(),
   };

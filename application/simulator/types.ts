@@ -59,6 +59,7 @@ export type SimulatedReleaseResult = z.infer<typeof SimulatedReleaseResultSchema
 
 export interface SimulatorControls {
   scriptNext(operationKind: string, outcome: ScriptedOutcome): void;
+  completeAllocation(operationId: string): void;
   setEnvironment(registrationId: string, state: SimulatedEnvironment): void;
   setRuntimeProfile(profile: RuntimeProfile): void;
   setSessionMissing(hubSessionId: string): void;
@@ -76,6 +77,7 @@ export interface SimulatorCallLog { list(): readonly SimulatorCall[] }
 export interface Simulators {
   readonly execution: ExecutionConnector;
   readonly runtime: AgentRuntimeConnector;
+  runtimeFor(profile: RuntimeProfile): AgentRuntimeConnector;
   readonly controls: SimulatorControls;
   readonly calls: SimulatorCallLog;
   close(): void;

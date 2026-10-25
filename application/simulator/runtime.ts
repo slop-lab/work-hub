@@ -4,6 +4,7 @@ import { InputReceiptSchema, JsonObjectSchema, NativeRefSchema, OutputItemSchema
 import { executeOperation, rejected } from "./operation.ts";
 import { toRuntimeEvent } from "./controls.ts";
 import type { SimulatorStore } from "./store.ts";
+import type { RuntimeProfile } from './types.ts';
 import { SimulatedReadinessSchema } from "./types.ts";
 
 const json = (value: unknown): JsonObject => JsonObjectSchema.parse(JSON.parse(JSON.stringify(value)));
@@ -16,8 +17,10 @@ const limitedCapabilities = (): RuntimeCapabilities => ({ servicePreparation: ca
 
 export class SimulatedRuntimeConnector implements AgentRuntimeConnector {
   readonly #store: SimulatorStore;
-  constructor(store: SimulatorStore) { this.#store = store; }
-  #capabilities(): RuntimeCapabilities { return this.#store.getRuntimeProfile() === "structured" ? structuredCapabilities() : limitedCapabilities(); }
+  readonly #profile: RuntimeProfile | undefined;
+  constructor(store: SimulatorStore, profile?: RuntimeProfile) { this.#store = store; this.#profile = profile; }
+  #runtimeProfile(): RuntimeProfile { return this.#profile ?? this.#store.getRuntimeProfile(); }
+  #capabilities(): RuntimeCapabilities { return this.#runtimeProfile() === "structured" ? structuredCapabilities() : limitedCapabilities(); }
   #state(sessionId: string): SessionState | undefined { const raw = this.#store.getState(`session:${sessionId}`); return raw === undefined ? undefined : SessionStateSchema.parse(JSON.parse(raw)); }
   #save(sessionId: string, state: SessionState): void { this.#store.setState(`session:${sessionId}`, JSON.stringify(state)); }
   #sameNative(left: import("../contracts/index.ts").NativeRef, right: import("../contracts/index.ts").NativeRef): boolean { return left.installationId === right.installationId && left.providerScope === right.providerScope && left.kind === right.kind && left.id === right.id && left.incarnation === right.incarnation; }
@@ -31,29 +34,29 @@ export class SimulatedRuntimeConnector implements AgentRuntimeConnector {
   }
   describe(): { readonly manifest: ConnectorManifest; readonly capabilities: RuntimeCapabilities } {
     const safety = { deduplicatesByClientOperationId: true, lookupByClientOperationId: true, replayAfterUnknown: "same_id_only" as const };
-    return { manifest: { id: "workhub.simulator.runtime", kind: "agent_runtime", implementationVersion: "0.3.0", contractMajor: 1, configurationSchemaId: this.#capabilities().configurationSchemaId, requiredSecretPurposes: [], requiredPermissions: [], operationSafety: { prepareRuntime: safety, openSession: safety, requestControl: safety, startAttempt: safety, sendInstruction: safety, deliverResponse: safety, requestStop: safety, detachSession: safety }, extensions: { simulated: true, profile: this.#store.getRuntimeProfile() } }, capabilities: this.#capabilities() };
+    return { manifest: { id: "workhub.simulator.runtime", kind: "agent_runtime", implementationVersion: "0.3.0", contractMajor: 1, configurationSchemaId: this.#capabilities().configurationSchemaId, requiredSecretPurposes: [], requiredPermissions: [], operationSafety: { prepareRuntime: safety, openSession: safety, requestControl: safety, startAttempt: safety, sendInstruction: safety, deliverResponse: safety, requestStop: safety, detachSession: safety }, extensions: { simulated: true, profile: this.#runtimeProfile() } }, capabilities: this.#capabilities() };
   }
   async probe(ctx: CallContext, route: RuntimeRoute): Promise<Observation<{ readonly ready: boolean; readonly unmetRequirements: readonly string[] }>> { this.#store.recordCall("runtime", "runtime.probe", json(route)); const configured = this.#store.getState(`readiness:${route.route.id}`); const value = configured === undefined ? { ready: true, unmetRequirements: [] } : SimulatedReadinessSchema.parse(JSON.parse(configured)); return { value, sourceInstallationId: ctx.installationId, observedAt: this.#store.now(), assurance: "reported", limitations: [] }; }
   async prepareRuntime(ctx: ActionContext, input: RuntimePreparation): Promise<OperationReceipt<{ readonly route: AccessHandleRef }>> {
-    if (this.#store.getRuntimeProfile() === "limited_bridge") return rejected(ctx, "runtime.prepareRuntime", "workhub.runtime.route.v1", { code: "service_preparation_unsupported", category: "unsupported", message: "This runtime must be prepared externally.", retry: "manual_action" });
+    if (this.#runtimeProfile() === "limited_bridge") return rejected(ctx, "runtime.prepareRuntime", "workhub.runtime.route.v1", { code: "service_preparation_unsupported", category: "unsupported", message: "This runtime must be prepared externally.", retry: "manual_action" });
     return executeOperation(this.#store, ctx, { connector: "runtime", kind: "runtime.prepareRuntime", resultSchemaId: "workhub.runtime.route.v1", resultSchema: RuntimeRouteResultSchema, input: json(input), evidenceEffect: "runtime.service_ready", effect: () => ({ route: input.route.route }) });
   }
   async openSession(ctx: ActionContext, input: OpenSessionInput): Promise<OperationReceipt<RuntimeBindingDescriptor>> {
     const seeded = this.#state(input.hubSessionId);
     if (input.mode === "attach" && seeded !== undefined && !this.#sameNative(seeded.nativeSession, input.nativeSession)) return rejected(ctx, "runtime.openSession", "workhub.runtime.binding.v1", { code: "native_identity_mismatch", category: "identity_mismatch", message: "The seeded native session has a different identity.", retry: "manual_action" });
     return executeOperation<RuntimeBindingDescriptor>(this.#store, ctx, { connector: "runtime", kind: "runtime.openSession", resultSchemaId: "workhub.runtime.binding.v1", resultSchema: RuntimeBindingDescriptorSchema, input: json(input), evidenceEffect: "session.opened", effect: () => {
-      const profile = this.#store.getRuntimeProfile();
+      const profile = this.#runtimeProfile();
       const nativeSession = input.mode === "attach" ? input.nativeSession : { installationId: ctx.installationId, providerScope: "simulated", kind: "agent-session", id: `native:${input.hubSessionId}`, incarnation: "v1" };
       const mode = input.requestedControl;
       const allowedActions: RuntimeControlGrant["allowedActions"] = mode === "observe" ? [] : profile === "structured" ? ["start_attempt", "send_instruction", "deliver_response", "request_stop", "interactive_input"] : ["start_attempt", "send_instruction", "deliver_response", "request_stop"];
       const controlGrant = { id: `control:${input.hubSessionId}`, mode, allowedActions, externalClientsMayAlsoControl: input.mode === "attach" };
       const history = seeded?.history ?? (profile === "structured" ? "complete_available" as const : "live_only" as const);
       this.#save(input.hubSessionId, { ...(seeded ?? { phase: "idle" as const }), nativeSession, controlGrantId: controlGrant.id, mode, history, missing: false });
-      return { nativeSession, nativeIdentityAssurance: profile === "structured" ? "immutable" as const : "weak" as const, origin: input.mode === "attach" ? "attached_existing" as const : "created" as const, route: input.route.route, controlGrant, capabilities: this.#capabilities(), history };
+      return { nativeSession, nativeIdentityAssurance: profile === "structured" ? "immutable" as const : "weak" as const, origin: input.mode === "attach" ? input.sessionLaunchOwner === 'execution_provider' ? 'provider_precreated' as const : "attached_existing" as const : "created" as const, route: input.route.route, controlGrant, capabilities: this.#capabilities(), history };
     } });
   }
   async requestControl(ctx: ActionContext, input: { readonly target: RuntimeTarget; readonly requestedActions: RuntimeControlGrant["allowedActions"] }): Promise<OperationReceipt<RuntimeControlGrant>> {
-    if (this.#store.getRuntimeProfile() === "limited_bridge") return rejected(ctx, "runtime.requestControl", "workhub.runtime.control-grant.v1", { code: "control_transfer_unsupported", category: "unsupported", message: "This profile cannot transfer native control.", retry: "never" });
+    if (this.#runtimeProfile() === "limited_bridge") return rejected(ctx, "runtime.requestControl", "workhub.runtime.control-grant.v1", { code: "control_transfer_unsupported", category: "unsupported", message: "This profile cannot transfer native control.", retry: "never" });
     const error = this.#targetError(input.target);
     if (error !== undefined) return rejected(ctx, "runtime.requestControl", "workhub.runtime.control-grant.v1", error);
     return executeOperation<RuntimeControlGrant>(this.#store, ctx, { connector: "runtime", kind: "runtime.requestControl", resultSchemaId: "workhub.runtime.control-grant.v1", resultSchema: RuntimeControlGrantSchema, input: json(input), evidenceEffect: "runtime.control_granted", effect: () => { const grant = { id: `control:${input.target.hubSessionId}:transferred`, mode: "control" as const, allowedActions: [...input.requestedActions], externalClientsMayAlsoControl: true }; const state = this.#state(input.target.hubSessionId); if (state !== undefined) this.#save(input.target.hubSessionId, { ...state, mode: "control", controlGrantId: grant.id }); return grant; } });
@@ -96,7 +99,7 @@ export class SimulatedRuntimeConnector implements AgentRuntimeConnector {
     const after = z.coerce.number().int().nonnegative().parse(input.after ?? "0");
     const items = this.#store.readOutput(input.target.hubSessionId, after, Math.min(input.limit, 1_000)).map((row) => OutputItemSchema.parse({ ...JsonObjectSchema.parse(row.item), sourceItemId: String(row.sequence) }));
     const gap = this.#store.getState(`gap:${input.target.hubSessionId}`);
-    const coverage = this.#store.getRuntimeProfile() === "structured" ? "complete_available" as const : "live_only" as const;
+    const coverage = this.#runtimeProfile() === "structured" ? "complete_available" as const : "live_only" as const;
     const last = items.at(-1)?.sourceItemId;
     return { items, ...(last === undefined ? {} : { nextCursor: last }), coverage, gaps: gap === undefined ? [] : [{ reason: gap }] };
   }

@@ -76,3 +76,30 @@ export function executeOperation<T>(store: SimulatorStore, ctx: ActionContext, s
   store.putOperation(ctx.operationId, ctx.inputDigest, serialize(confirmed));
   return confirmed;
 }
+
+export function completeWaitingOperation<T>(
+  store: SimulatorStore,
+  operationId: string,
+  resultSchema: ZodType<T>,
+  evidenceEffect: string,
+  effect: () => T,
+): OperationReceipt<T> {
+  const existing = store.getOperation(operationId);
+  if (existing === undefined) throw new TypeError("Cannot complete an unknown simulator operation.");
+  if (existing.visibleReceipt !== undefined || existing.receipt.status !== "accepted") {
+    throw new TypeError("Only an accepted waiting simulator operation can be completed.");
+  }
+  const result = resultSchema.parse(effect());
+  const confirmed: OperationReceipt<T> = {
+    operationId: existing.receipt.operationId,
+    operationKind: existing.receipt.operationKind,
+    resultSchemaId: existing.receipt.resultSchemaId,
+    updatedAt: store.now(),
+    partialEffects: existing.receipt.partialEffects,
+    status: "confirmed",
+    result,
+    evidence: { effect: evidenceEffect, source: "provider_receipt", observedAt: store.now() },
+  };
+  store.putOperation(operationId, existing.digest, serialize(confirmed));
+  return confirmed;
+}

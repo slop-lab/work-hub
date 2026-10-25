@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { NativeRef, RuntimeEvent } from "../contracts/index.ts";
 import { JsonValueSchema, NativeRefSchema, RecipientSchema } from "../contracts/index.ts";
 import type { SimulatorStore } from "./store.ts";
+import type { SimulatedExecutionConnector } from "./execution.ts";
 import { SimulatedQuestionSchema, SimulatedReadinessSchema, SimulatedReleaseResultSchema, SimulatedResultSchema, SimulatedSessionSeedSchema, SimulatedTerminationSchema, type SimulatedQuestion, type SimulatedResult, type SimulatedTermination, type SimulatorControls } from "./types.ts";
 
 const SessionControlStateSchema = z.object({ nativeSession: NativeRefSchema, controlGrantId: z.string(), phase: z.string() }).passthrough();
@@ -16,7 +17,8 @@ type PendingAdminEvent = SimulatedAdminEvent extends infer Event ? Event extends
 
 export class PersistentSimulatorControls implements SimulatorControls {
   readonly #store: SimulatorStore;
-  constructor(store: SimulatorStore) { this.#store = store; }
+  readonly #execution: SimulatedExecutionConnector;
+  constructor(store: SimulatorStore, execution: SimulatedExecutionConnector) { this.#store = store; this.#execution = execution; }
   #session(sessionId: string): { readonly nativeSession: NativeRef; readonly controlGrantId: string; readonly state: z.infer<typeof SessionControlStateSchema> } {
     const raw = this.#store.getState(`session:${sessionId}`);
     const state = SessionControlStateSchema.parse(raw === undefined ? { nativeSession: { installationId: "sim-runtime", providerScope: "simulated", kind: "agent-session", id: `native:${sessionId}`, incarnation: "v1" }, controlGrantId: `control:${sessionId}`, phase: "idle" } : JSON.parse(raw));
@@ -27,6 +29,7 @@ export class PersistentSimulatorControls implements SimulatorControls {
     this.#store.addEvent(sessionId, JsonValueSchema.parse(JSON.parse(JSON.stringify(parsed))));
   }
   scriptNext(operationKind: string, outcome: Parameters<SimulatorControls["scriptNext"]>[1]): void { this.#store.scriptNext(operationKind, outcome); }
+  completeAllocation(operationId: string): void { this.#execution.completeAllocation(operationId); }
   setEnvironment(registrationId: string, state: Parameters<SimulatorControls["setEnvironment"]>[1]): void { this.#store.setEnvironment(registrationId, state); }
   setRuntimeProfile(profile: Parameters<SimulatorControls["setRuntimeProfile"]>[0]): void { this.#store.setRuntimeProfile(profile); }
   setSessionMissing(hubSessionId: string): void { const session = this.#session(hubSessionId); this.#store.setState(`session:${hubSessionId}`, JSON.stringify({ ...session.state, missing: true })); }
