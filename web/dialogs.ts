@@ -173,10 +173,11 @@ export function delegationDialog(ctx: UiContext, task: HubTask): void {
 							workAreas: [],
 						}
 					: { mode: "none" };
-		if (environment === null) {
+        if (environment === null) {
 			ctx.notice("No enabled execution connector is available for provisioning.", "error");
 			return;
-		}
+        }
+        const registrationRevision = mode === 'existing' ? ctx.state.environments.find((item) => item.id === findFormValue(form, 'registration'))?.revision : undefined;
 		confirm.disabled = true;
 		dialog.setAttribute("aria-busy", "true");
 		void ctx
@@ -185,7 +186,7 @@ export function delegationDialog(ctx: UiContext, task: HubTask): void {
 					commandId: commandId(),
 					type: "attempt.delegate",
 					target: { kind: "task", id: task.id },
-					expected: { task: task.revision, profile: profile.revision },
+          expected: { task: task.revision, profile: profile.revision, ...(registrationRevision === undefined ? {} : { registration: registrationRevision }) },
 					payload: {
 						profileId,
 						environment,

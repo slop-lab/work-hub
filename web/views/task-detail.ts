@@ -98,7 +98,8 @@ function editSection(ctx: UiContext, task: HubTask): HTMLElement {
 		option.selected = task.ownerId === user.id;
 		owner.append(option);
 	}
-	const form = el("form", { class: "detail-section form-grid" }, el("h2", {}, "Task brief"), label("Title", title), label("Description", description), label("Expected outcome", outcome), label("Priority", priority), label("Owner", owner), submitButton("Save task", "secondary"));
+	const expectedRevision = el("input", { type: "hidden", name: "expectedTaskRevision", value: String(task.revision) });
+	const form = el("form", { class: "detail-section form-grid" }, expectedRevision, el("h2", {}, "Task brief"), label("Title", title), label("Description", description), label("Expected outcome", outcome), label("Priority", priority), label("Owner", owner), submitButton("Save task", "secondary"));
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
 		void ctx.command(
@@ -106,7 +107,7 @@ function editSection(ctx: UiContext, task: HubTask): HTMLElement {
 				commandId: commandId(),
 				type: "task.update",
 				target: { kind: "task", id: task.id },
-				expected: { task: task.revision },
+				expected: { task: Number(findFormValue(form, "expectedTaskRevision")) },
 				payload: {
 					title: findFormValue(form, "title"),
 					description: findFormValue(form, "description"),

@@ -44,6 +44,7 @@ export const requestSchema = z.object({
 	sessionId: idSchema.optional(),
 	attemptId: idSchema.optional(),
 	bindingGeneration: z.number().int().positive().optional(),
+	recipient: z.discriminatedUnion("kind", [z.object({ kind: z.literal("user"), userId: idSchema }), z.object({ kind: z.literal("project_members"), projectId: idSchema }), z.object({ kind: z.literal("agent_session"), sessionId: idSchema })]),
 	prompt: z.string(),
 	reason: z.string().optional(),
 	answerSchema,

@@ -1,4 +1,4 @@
-import { commandId } from "../api.ts";
+import { commandId, loadTasks } from "../api.ts";
 import { badge, button, el, findFormValue, formatTime, label, submitButton } from "../dom.ts";
 import type { HubTask } from "../state-schema.ts";
 import type { UiContext } from "../ui-context.ts";
@@ -20,19 +20,30 @@ export function backlogView(ctx: UiContext, taskId?: string): HTMLElement {
 	const owner = filterSelect("Filter by owner", "All owners", ctx.state.users.map((item) => [item.id, item.displayName]));
 	const priority = filterSelect("Filter by priority", "All priorities", [["urgent", "Urgent"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]]);
 	const list = el("div", { class: "task-list" });
-	const render = (): void => {
-		const query = search.value.trim().toLocaleLowerCase();
-		const selectedStatus = status.value;
-		const tasks = ctx.state.tasks.filter((task) => task.archivedAt === undefined && (selectedStatus === "all" || task.status === selectedStatus) && (project.value === "all" || task.projectId === project.value) && (owner.value === "all" || task.ownerId === owner.value) && (priority.value === "all" || task.priority === priority.value) && `${task.title} ${task.description} ${task.expectedOutcome ?? ""}`.toLocaleLowerCase().includes(query));
+	let requestSequence = 0;
+	let nextCursor: string | undefined;
+	let currentTasks: readonly HubTask[] = [];
+	const render = (tasks: readonly HubTask[]): void => {
+		currentTasks = tasks;
 		list.replaceChildren(...tasks.map((task) => taskRow(ctx, task)));
 		if (tasks.length === 0) list.append(el("div", { class: "empty-state" }, el("h2", {}, "No matching work"), el("p", {}, "Adjust the search or capture a new task.")));
+		if (nextCursor !== undefined) list.append(button("Load more tasks", "secondary", () => void queryTasks(nextCursor, currentTasks)));
 	};
-	search.addEventListener("input", render);
-	status.addEventListener("change", render);
-	project.addEventListener("change", render);
-	owner.addEventListener("change", render);
-	priority.addEventListener("change", render);
-	render();
+	const queryTasks = async (after?: string, accumulated: readonly HubTask[] = []): Promise<void> => {
+		const sequence = ++requestSequence;
+		const selectedStatus = status.value;
+		const page = await loadTasks({ q: search.value.trim(), ...(selectedStatus === "all" ? {} : { status: selectedStatus }), ...(project.value === "all" ? {} : { projectId: project.value }), ...(owner.value === "all" ? {} : { ownerId: owner.value }), ...(priority.value === "all" ? {} : { priority: priorityNumber(priority.value) }), ...(after === undefined ? {} : { after }), limit: 50 });
+		if (sequence !== requestSequence) return;
+		nextCursor = page.nextCursor;
+		render([...accumulated, ...page.items]);
+	};
+	const reload = (): void => { nextCursor = undefined; list.replaceChildren(el("p", { class: "muted" }, "Loading tasks.")); void queryTasks().catch((error: unknown) => ctx.notice(error instanceof Error ? error.message : "Tasks could not be loaded.", "error")); };
+	search.addEventListener("input", reload);
+	status.addEventListener("change", reload);
+	project.addEventListener("change", reload);
+	owner.addEventListener("change", reload);
+	priority.addEventListener("change", reload);
+	reload();
 	return el(
 		"div",
 		{ class: "page" },
@@ -41,6 +52,16 @@ export function backlogView(ctx: UiContext, taskId?: string): HTMLElement {
 		el("div", { class: "filter-bar" }, search, project, status, owner, priority),
 		list,
 	);
+}
+
+function priorityNumber(value: string): number {
+	switch (value) {
+		case "urgent": return 10;
+		case "high": return 30;
+		case "medium": return 50;
+		case "low": return 80;
+		default: return 50;
+	}
 }
 
 function captureForm(ctx: UiContext): HTMLElement {
@@ -91,12 +112,14 @@ function filterSelect(labelText: string, allText: string, options: readonly (rea
 
 function taskRow(ctx: UiContext, task: HubTask): HTMLElement {
 	const owner = ctx.state.users.find((user) => user.id === task.ownerId)?.displayName ?? "Unassigned";
+	const open = button("Open task", "quiet", () => ctx.navigate(`#/backlog/${task.id}`));
+	open.setAttribute("aria-label", `Open ${task.title}`);
 	return el(
 		"article",
 		{ class: "task-row" },
 		el("div", { class: "task-row__state" }, badge(task.status, statusTone(task.status)), badge(task.priority, task.priority === "urgent" || task.priority === "high" ? "warning" : "neutral")),
 		el("div", { class: "task-row__body" }, el("h2", {}, task.title), el("p", {}, task.description || "No description yet."), el("span", { class: "task-row__meta" }, `${owner} · Updated ${formatTime(task.updatedAt)}`)),
-		button(`Open ${task.title}`, "quiet", () => ctx.navigate(`#/backlog/${task.id}`)),
+		open,
 	);
 }
 

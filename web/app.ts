@@ -1,6 +1,6 @@
 import { ApiError, type CommandInput, loadState, login, logout, sendCommand } from "./api.ts";
 import { clear } from "./dom.ts";
-import { captureDirtyForms, markDirtyForm, markFormClean, restoreDirtyForms } from "./form-islands.ts";
+import { captureDirtyForms, clearDirtyForms, markDirtyForm, markFormClean, restoreDirtyForms } from "./form-islands.ts";
 import { loginScreen } from "./login.ts";
 import { appShell, errorScreen, loadingScreen, showToast } from "./shell.ts";
 import type { HubState } from "./state-schema.ts";
@@ -9,6 +9,7 @@ import { backlogView } from "./views/backlog.ts";
 import { dashboardView } from "./views/dashboard.ts";
 import { environmentsView } from "./views/environments.ts";
 import { sessionView } from "./views/session.ts";
+import { operationView } from "./views/operation.ts";
 import { settingsView } from "./views/settings.ts";
 import { showcaseView } from "./views/showcase.ts";
 
@@ -21,7 +22,7 @@ function requireRoot(): HTMLElement {
 const root = requireRoot();
 
 let state: HubState | null = null;
-let refreshInFlight = false;
+let refreshInFlight: Promise<void> | null = null;
 let submittedForm: HTMLFormElement | null = null;
 
 function navigate(route: string): void {
@@ -36,14 +37,15 @@ async function command(input: CommandInput, successMessage: string): Promise<boo
 	const active = document.activeElement;
 	const activeForm = active instanceof Element ? active.closest("form") : null;
 	const sourceForm = submittedForm ?? (activeForm instanceof HTMLFormElement ? activeForm : null);
+	const sourceIdentity = state === null ? undefined : refreshIdentity(parseRoute(), state);
 	submittedForm = null;
 	setCommandBusy(true);
 	try {
 		const receipt = await sendCommand(input);
 		const tone: NoticeTone = receipt.status === "confirmed" ? "success" : receipt.status === "rejected" || receipt.status === "failed" ? "error" : receipt.status === "unknown" ? "warning" : "info";
+		if (receipt.status !== "rejected" && receipt.status !== "failed") markFormClean(sourceForm, sourceIdentity);
+		await refreshAfterCommand();
 		if (receipt.status === "rejected" || receipt.status === "failed") throw new ApiError(422, receipt.error?.message ?? "Command was not accepted.");
-		markFormClean(sourceForm);
-		await refresh();
 		notice(receipt.status === "unknown" ? `${successMessage} The external effect is unknown and must be reconciled.` : successMessage, tone);
 		return true;
 	} finally {
@@ -65,17 +67,22 @@ function setCommandBusy(busy: boolean): void {
 }
 
 async function refresh(): Promise<void> {
-	if (refreshInFlight) return;
-	refreshInFlight = true;
-  try {
-    const nextState = await loadState();
+	if (refreshInFlight !== null) return refreshInFlight;
+	const pending = (async () => {
+		const route = parseRoute();
+		const nextState = await loadState(route);
     const islands = state === null ? [] : captureDirtyForms(root, refreshIdentity(parseRoute(), state));
     state = nextState;
 		render();
 		restoreDirtyForms(root, refreshIdentity(parseRoute(), state), islands);
-	} finally {
-		refreshInFlight = false;
-	}
+	})();
+	refreshInFlight = pending;
+	try { await pending; } finally { if (refreshInFlight === pending) refreshInFlight = null; }
+}
+
+async function refreshAfterCommand(): Promise<void> {
+	if (refreshInFlight !== null) await refreshInFlight;
+	await refresh();
 }
 
 async function backgroundRefresh(): Promise<void> {
@@ -102,6 +109,8 @@ function contentFor(route: Route, ctx: UiContext): HTMLElement {
 			return backlogView(ctx, route.taskId);
 		case "session":
 			return sessionView(ctx, route.sessionId);
+		case "operation":
+			return operationView(ctx, route.operationId);
 		case "environments":
 			return environmentsView(ctx);
 		case "settings":
@@ -114,6 +123,7 @@ function contentFor(route: Route, ctx: UiContext): HTMLElement {
 function render(): void {
 	if (state === null) return;
 	const route = parseRoute();
+	const retainedToasts = [...(root.querySelector<HTMLElement>(".toast-region")?.children ?? [])];
 	const ctx: UiContext = {
 		state,
 		navigate,
@@ -132,6 +142,7 @@ function render(): void {
 	root.append(
 		appShell(state, route, contentFor(route, ctx), () => {
 			void logout().then(() => {
+				clearDirtyForms();
 				for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
 					const key = sessionStorage.key(index);
 					if (key?.startsWith("workhub:draft:") === true) sessionStorage.removeItem(key);
@@ -142,6 +153,8 @@ function render(): void {
 			});
 		}),
 	);
+	const toastRegion = root.querySelector<HTMLElement>(".toast-region");
+	if (toastRegion !== null && retainedToasts.length > 0) toastRegion.replaceChildren(...retainedToasts);
 }
 
 async function handleLogin(token: string): Promise<void> {
@@ -161,8 +174,8 @@ async function start(): Promise<void> {
 	}
 }
 
-root.addEventListener("input", markDirtyForm);
-root.addEventListener("change", markDirtyForm);
+root.addEventListener("input", (event) => { if (state !== null) markDirtyForm(event, refreshIdentity(parseRoute(), state)); });
+root.addEventListener("change", (event) => { if (state !== null) markDirtyForm(event, refreshIdentity(parseRoute(), state)); });
 root.addEventListener(
 	"submit",
 	(event) => {
@@ -175,7 +188,7 @@ root.addEventListener(
 	{ capture: true },
 );
 window.addEventListener("hashchange", () => {
-	render();
+	void refresh().catch((error: unknown) => notice(error instanceof Error ? error.message : "Route could not be loaded.", "error"));
 });
 window.setInterval(() => {
 	void backgroundRefresh();

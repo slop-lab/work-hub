@@ -14,6 +14,8 @@ export const resultSchema = z.object({
 	id,
 	attemptId: id,
 	taskId: id,
+	authorId: id,
+	evidence: z.array(z.object({ origin: z.enum(['agent_claim', 'runtime_observation', 'external_check', 'human_assertion']), detail: z.string() })),
 	summary: z.string(),
 	limitations: z.array(z.string()),
 	referenceIds: z.array(id),
@@ -71,6 +73,8 @@ const attentionItemSchema = z.object({
 	sessionId: id.optional(),
 	requestId: id.optional(),
 	resultId: id.optional(),
+	operationId: id.optional(),
+	observedAt: timestamp.optional(),
 	freshness: z.enum(["fresh", "stale", "unreachable", "unknown"]),
 	reasonCode: z.string(),
 	availableActions: actionSchema,
@@ -78,6 +82,7 @@ const attentionItemSchema = z.object({
 const outputSchema = z.object({
 	id,
 	sessionId: id,
+	sequence: z.number().int(),
 	attemptId: id.optional(),
 	kind: z.enum(["message", "log", "status_note", "reference", "gap"]),
 	role: z.enum(["user", "agent", "runtime"]).optional(),
@@ -89,6 +94,7 @@ const entrySchema = z.object({ id, taskId: id, authorId: id, kind: z.string(), t
 const answerValueSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("text"), text: z.string() }), z.object({ kind: z.literal("single_choice"), optionId: z.string() }), z.object({ kind: z.literal("approval"), decision: z.enum(["approve", "deny"]), note: z.string().optional() })]);
 const responseSchema = z.object({ id, requestId: id, requestRevision: z.number().int(), authorId: id, answer: answerValueSchema, digest: z.string(), committedAt: timestamp });
 const viewStateSchema = z.object({ attentionKey: z.string(), readAt: timestamp.nullable().optional(), dismissedAt: timestamp.nullable().optional() });
+export const operationSchema = z.object({ id, commandId: id, connectorKind: z.enum(["execution", "runtime"]), installationId: id, operationKind: z.string(), providerOperationKind: z.string().optional(), stage: z.string(), targetId: id.optional(), targetGeneration: z.number().int().optional(), status: z.enum(["accepted", "running", "confirmed", "rejected", "failed", "unknown"]), updatedAt: timestamp, observedAt: timestamp, error: z.object({ code: z.string(), message: z.string(), retry: z.string() }).optional(), reconciliationHint: z.string().optional(), canReconcile: z.boolean() });
 
 export const hubStateSchema = z.object({
 	snapshotCursor: z.string(),
@@ -118,6 +124,7 @@ export const hubStateSchema = z.object({
 	}),
 	entries: z.array(entrySchema).default([]),
 	responses: z.array(responseSchema).default([]),
+	operations: z.array(operationSchema).default([]),
 	userViewState: z.array(viewStateSchema).default([]),
 	output: z.array(outputSchema),
 });
@@ -139,6 +146,9 @@ export type HubBinding = z.infer<typeof bindingSchema>;
 export type HubProfile = z.infer<typeof profileSchema>;
 export type HubReference = z.infer<typeof referenceSchema>;
 export type CommandReceipt = z.infer<typeof commandReceiptSchema>;
+export type HubOperation = z.infer<typeof operationSchema>;
 
 export const outputPageSchema = z.object({ items: z.array(outputSchema), nextCursor: z.string().optional(), coverage: z.enum(["complete_available", "partial", "live_only"]), gaps: z.array(z.object({ reason: z.string() })), retainedBounds: z.object({ first: z.number().nullable(), last: z.number().nullable(), count: z.number().int(), gapCount: z.number().int() }) });
 export type OutputPage = z.infer<typeof outputPageSchema>;
+export const taskPageSchema = z.object({ items: z.array(taskSchema), nextCursor: z.string().optional(), snapshotCursor: z.string() });
+export type TaskPage = z.infer<typeof taskPageSchema>;

@@ -22,13 +22,13 @@ test("Given delegated simulated work, when explicit simulator events are emitted
 		await expect(page.getByText("Simulator scenario")).toBeVisible();
 		await page.getByText("Simulator scenario").click();
 		await page.getByRole("textbox", { name: "Instruction" }).fill("Record an explicit session instruction.");
-		const instructionRefresh = page.waitForResponse((response) => response.url().endsWith("/api/v1/state") && response.request().method() === "GET");
+		const instructionRefresh = page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
 		await page.getByRole("button", { name: "Send instruction" }).click();
 		await instructionRefresh;
 		await page.getByLabel("Simulated event").selectOption("question");
 		await expect(page.getByLabel("Question route")).toHaveValue("native");
 		await page.getByLabel("Simulator text").fill("Choose a release boundary");
-		await page.waitForResponse((response) => response.url().endsWith("/api/v1/state") && response.request().method() === "GET");
+		await page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
 		await expect(page.getByLabel("Simulated event")).toHaveValue("question");
 		await expect(page.getByLabel("Question route")).toHaveValue("native");
 		await expect(page.getByLabel("Simulator text")).toHaveValue("Choose a release boundary");
@@ -145,9 +145,13 @@ test("Given retained simulator output, when more than one page exists, then sess
 		await page.locator("#main-content").getByRole("link", { name: "Session", exact: true }).click();
 		const sessionId = page.url().split("/").at(-1);
 		expect(sessionId).toBeTruthy();
+		await expect.poll(async () => {
+			const response = await page.request.get(`${app.url}/api/v1/state`);
+			return z.object({ sessions: z.array(z.object({ id: z.string(), state: z.string() })) }).parse(await response.json()).sessions.find((item) => item.id === sessionId)?.state;
+		}).toBe("open");
 		for (let index = 1; index <= 55; index += 1) {
 			const response = await page.request.post(`${app.url}/api/v1/simulator/commands`, { headers: { Origin: app.url }, data: { type: "output", sessionId, text: `Retained output ${index}` } });
-			expect(response.ok()).toBeTruthy();
+			expect(response.ok(), await response.text()).toBeTruthy();
 		}
 		await page.reload();
 		await expect(page.getByRole("button", { name: "Load more history" })).toBeVisible();
@@ -196,7 +200,7 @@ test("Given a stale task revision, when save is rejected, then the dirty draft r
 		if (task === undefined) throw new TypeError("Created task missing from state");
 		const update = await page.request.post(`${app.url}/api/v1/commands`, { headers: { Origin: app.url }, data: { commandId: `external-${crypto.randomUUID()}`, type: "task.update", target: { kind: "task", id: task.id }, expected: { task: task.revision }, payload: { title: "Changed elsewhere" } } });
 		expect(update.ok()).toBeTruthy();
-		await page.waitForResponse((response) => response.url().endsWith("/api/v1/state") && response.request().method() === "GET");
+		await page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
 		await expect(page.getByRole("heading", { name: "Changed elsewhere" })).toBeVisible();
 		await page.getByRole("button", { name: "Save task" }).click();
 		await expect(page.getByLabel("Description")).toHaveValue("Keep this text after the conflict.");
@@ -214,7 +218,7 @@ test("Given an unresolved attention item, when it is read and dismissed, then ca
 		await page.getByLabel("New task title").fill("Keep canonical question actionable");
 		await page.getByRole("button", { name: "Add task" }).click();
 		await page.getByRole("button", { name: "Open Keep canonical question actionable" }).click();
-		await page.getByLabel("Question").fill("Should this stay open?");
+		await page.getByRole("textbox", { name: "Question" }).fill("Should this stay open?");
 		await page.getByRole("button", { name: "Save question" }).click();
 		await page.getByRole("link", { name: "Today" }).click();
 		await page.getByRole("button", { name: "Mark read" }).click();

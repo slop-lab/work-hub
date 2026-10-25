@@ -1,10 +1,11 @@
-import { commandId } from "../api.ts";
+import { commandId, loadTasks } from "../api.ts";
+import type { HubTask } from "../state-schema.ts";
 import { el, findFormValue, label, submitButton } from "../dom.ts";
 import type { UiContext } from "../ui-context.ts";
 
 export function emptySession(ctx: UiContext): HTMLElement {
 	const task = el("select", { class: "select", name: "task" });
-	for (const item of ctx.state.tasks) task.append(el("option", { value: item.id }, item.title));
+	let availableTasks: readonly HubTask[] = [];
 	const profile = el("select", { class: "select", name: "profile" });
 	for (const item of ctx.state.profiles.filter((candidate) => candidate.enabled)) profile.append(el("option", { value: item.id }, item.label));
 	const nativeSession = el("input", { class: "input", name: "nativeSession", required: true, placeholder: "Native session ID" });
@@ -24,7 +25,7 @@ export function emptySession(ctx: UiContext): HTMLElement {
 		event.preventDefault();
 		const taskId = findFormValue(form, "task");
 		const profileId = findFormValue(form, "profile");
-		const selectedTask = ctx.state.tasks.find((item) => item.id === taskId);
+		const selectedTask = availableTasks.find((item) => item.id === taskId);
 		const selectedProfile = ctx.state.profiles.find((item) => item.id === profileId);
 		if (selectedTask === undefined || selectedProfile === undefined) return;
 		void ctx.command(
@@ -38,6 +39,10 @@ export function emptySession(ctx: UiContext): HTMLElement {
 			"Native session attached without submitting work.",
 		);
 	});
+	void loadTasks({ limit: 50 }).then((page) => {
+		availableTasks = page.items;
+		task.replaceChildren(...page.items.map((item) => el("option", { value: item.id }, item.title)));
+	}).catch((error: unknown) => ctx.notice(error instanceof Error ? error.message : "Task context could not be loaded.", "error"));
 	return el(
 		"div",
 		{ class: "page" },

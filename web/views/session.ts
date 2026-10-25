@@ -13,7 +13,7 @@ export function sessionView(ctx: UiContext, sessionId?: string): HTMLElement {
 	const attempt = ctx.state.attempts.find((item) => item.id === session.activeAttemptId);
 	const binding = ctx.state.environmentBindings.find((item) => item.sessionId === session.id);
 	const requests = ctx.state.requests.filter((item) => item.sessionId === session.id);
-	const results = ctx.state.results.filter((item) => item.taskId === session.taskId);
+	const results = attempt === undefined ? [] : ctx.state.results.filter((item) => item.attemptId === attempt.id);
 	const environment = el(
 		"section",
 		{ class: "detail-section" },
@@ -65,7 +65,7 @@ export function sessionView(ctx: UiContext, sessionId?: string): HTMLElement {
 		el(
 			"div",
 			{ class: "session-layout" },
-			el("section", { class: "transcript-pane" }, el("header", { class: "section-heading" }, el("h2", {}, "Transcript"), el("span", { class: "muted" }, "Retained output is paginated")), sessionOutput(ctx, session), instructionComposer(ctx, session, attempt)),
+			el("section", { class: "transcript-pane" }, el("header", { class: "section-heading" }, el("h2", {}, "Transcript"), el("span", { class: "muted" }, "Retained output is paginated")), sessionOutput(ctx, session, attempt), instructionComposer(ctx, session, attempt)),
 			el("aside", { class: "session-rail" }, sessionFacts(session, attempt), related, environment, sessionControls(ctx, session, attempt, binding), simulatorPanel(ctx, session)),
 		),
 	);
@@ -87,6 +87,8 @@ function sessionFacts(session: HubSession, attempt?: HubAttempt): HTMLElement {
 			el("dd", {}, attempt?.id ?? "None"),
 			el("dt", {}, "Observation"),
 			el("dd", {}, attempt?.observation ?? "No attempt"),
+			el("dt", {}, "Observed"),
+			el("dd", {}, attempt?.updatedAt ?? "No observation"),
 		),
 		...session.limitations.map((item) => el("p", { class: "limitation" }, item)),
 	);

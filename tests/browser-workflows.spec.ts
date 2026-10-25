@@ -50,12 +50,45 @@ test("Given a task, when task fields, comment, and a formal question are submitt
 		await page.getByRole("button", { name: "Open Exercise durable task forms" }).click();
 		await page.getByLabel("Description").fill("Persist every explicit form action.");
 		await page.getByLabel("Priority").selectOption("low");
+		let releaseContext: () => void = () => undefined;
+		const contextRelease = new Promise<void>((resolve) => { releaseContext = resolve; });
+		let contextReady: () => void = () => undefined;
+		const contextResponseReady = new Promise<void>((resolve) => { contextReady = resolve; });
+		let holdNextContext = true;
+		await page.route("**/api/v1/context*", async (route) => {
+			if (!holdNextContext) { await route.continue(); return; }
+			holdNextContext = false;
+			const response = await route.fetch();
+			contextReady();
+			await contextRelease;
+			await route.fulfill({ response });
+		});
 		await page.getByRole("button", { name: "Save task" }).click();
-		await page.getByLabel("Comment text").fill("Comment persisted through the application command service.");
-		await page.waitForResponse((response) => response.url().endsWith("/api/v1/state") && response.request().method() === "GET");
+		await contextResponseReady;
+		const comment = page.getByLabel("Comment text");
+		await comment.focus();
+		const replacementObserved = page.evaluate(() => {
+			const original = document.querySelector('textarea[name="comment"]');
+			if (original === null) throw new TypeError("Comment field missing before refresh");
+			return new Promise<void>((resolve) => {
+				const observer = new MutationObserver(() => {
+					if (!original.isConnected) { observer.disconnect(); resolve(); }
+				});
+				observer.observe(document.querySelector("#app") ?? document.body, { childList: true, subtree: true });
+			});
+		});
+		const contextRendered = page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
+		releaseContext();
+		await Promise.all([contextRendered, replacementObserved]);
+		await page.keyboard.insertText("Comment persisted through the application command service.");
 		await expect(page.getByLabel("Comment text")).toHaveValue("Comment persisted through the application command service.");
 		await expect(page.getByLabel("Comment text")).toBeFocused();
+		await page.getByLabel("Expected outcome").fill("Fresh handlers keep the current task revision.");
+		await page.getByRole("button", { name: "Save task" }).click();
+		await expect(page.getByRole("status")).toContainText("Task updated.");
+		await expect(page.getByLabel("Comment text")).toHaveValue("Comment persisted through the application command service.");
 		await page.getByRole("button", { name: "Add comment" }).click();
+		await expect(page.getByRole("status")).toContainText("Comment added.");
 		await page.getByLabel("Question").fill("Which release should carry this change?");
 		await page.getByLabel("Recipient").selectOption({ label: "Administrator" });
 		await page.getByRole("button", { name: "Save question" }).click();

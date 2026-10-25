@@ -13,6 +13,7 @@ import { Hub } from "../application/orchestration/hub.ts";
 export type BrowserHub = {
 	readonly url: string;
 	readonly token: string;
+	readonly hub: Hub;
 	readonly close: () => Promise<void>;
 };
 
@@ -39,6 +40,7 @@ export async function startBrowserHub(page: Page): Promise<BrowserHub> {
 	return {
 		url,
 		token,
+		hub,
 		close: async () => {
 			clearInterval(timer);
 			await new Promise<void>((resolve) => server.close(() => resolve()));
