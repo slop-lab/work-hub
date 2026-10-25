@@ -1,0 +1,20 @@
+schemaVersion: 1
+repositories:
+  main:
+    ref: main
+    defaultBranch: main
+    protect: [main, development]
+    branches:
+      main: {review: true}
+      development: {review: false}
+policy:
+  code-review:
+    requiredReviewerIds: [mjy]
+    pathReviewerRules: []
+  merge-policy: {}
+  git-ci:
+    ciRepositoryIds: [main]
+    requiredJobs:
+      - name: source
+        kind: ordinary-sysbox
+        evidenceClass: candidate-controlled

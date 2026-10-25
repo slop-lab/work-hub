@@ -102,3 +102,16 @@ blockers; both final visual passes passed. The scoped permission/export review
 passed after fixing complete bridge credential tuple enforcement. A broad security
 review did not complete because of a tool policy error, so no blanket security
 approval is inferred. See [review-fixes.md](review-fixes.md) for the closure ledger.
+
+## DIM required source gate
+
+`.dim/repos.yml` declares the managed main/development protections, explicit
+reviewer, and required DIM `source` job. `.dim/ci/runner.yml` selects
+`scripts/ci/source.bash`, which runs a lockfile-clean dependency install followed
+by strict TypeScript, the complete Node test suite, and the production build.
+The ordinary Sysbox runner supplies Node and npm; the job installs no host tools.
+Run the same source gate locally with `bash scripts/ci/source.bash` from the
+repository root. Real-browser journeys remain a separate `npm run test:browser`
+check using a Chromium executable compatible with the development environment.
+This source gate does not claim production-provider compatibility or browser
+performance/security audit coverage.
