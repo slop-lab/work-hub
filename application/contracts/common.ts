@@ -12,7 +12,7 @@ export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([z.null(), z.boolean(), z.number(), z.string(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema)]),
 );
 export const JsonObjectSchema: z.ZodType<JsonObject> = z.record(z.string(), JsonValueSchema);
-export const TimestampSchema = z.iso.datetime({ offset: true });
+export const TimestampSchema = z.iso.datetime();
 export const DigestSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]*:.+$/);
 
 export const NativeRefSchema = z.strictObject({
@@ -65,7 +65,9 @@ export const CallContextSchema = z.strictObject({
   workspaceId: z.string().min(1), installationId: z.string().min(1), correlationId: z.string().min(1),
   deadlineAt: TimestampSchema.optional(),
 });
-export interface CallContext extends z.infer<typeof CallContextSchema> {}
+export interface CallContext extends z.infer<typeof CallContextSchema> {
+  readonly signal?: AbortSignal;
+}
 
 export const ActionContextSchema = CallContextSchema.extend({
   commandId: z.string().min(1), operationId: z.string().min(1), inputDigest: DigestSchema, authorizedGrantRefs: z.array(z.string()),

@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { TimestampSchema } from './common.ts';
 import type { Id, JsonObject, Revision } from "./common.ts";
 import type { ConnectorError } from "./common.ts";
 import type { EnvironmentSelection } from "./execution.ts";
@@ -13,3 +15,17 @@ export interface HubCommandReceipt { readonly commandId: Id; readonly actorId: I
 export interface SurfaceContext { readonly sessionId: Id; readonly attemptId?: Id; readonly generation: number; readonly mode: "view" | "control"; readonly availableCommandTypes: readonly string[]; readonly eventCursor?: string }
 export interface SurfaceChannel { readonly id: Id; readonly kind: "terminal" | "native_view"; readonly scopedBrowserEndpoint: string; readonly expiresAt: string; readonly allowedActions: readonly ("read" | "write_input" | "resize")[]; readonly inputReplay: "forbidden" }
 export interface SessionSurface { readonly id: string; readonly contractMajor: 1; readonly kind: "transcript" | "terminal" | "native_view"; readonly requiredCapabilityNames: readonly string[]; openView(context: SurfaceContext): Promise<{ readonly viewId: Id; readonly channel?: SurfaceChannel; readonly outputCursor?: string }>; closeView(viewId: Id): Promise<void> }
+
+export const SurfaceContextSchema = z.strictObject({
+  sessionId: z.string().min(1), attemptId: z.string().min(1).optional(),
+  generation: z.number().int().nonnegative(), mode: z.enum(['view', 'control']),
+  availableCommandTypes: z.array(z.string().min(1)), eventCursor: z.string().optional(),
+});
+export const SurfaceChannelSchema = z.strictObject({
+  id: z.string().min(1), kind: z.enum(['terminal', 'native_view']),
+  scopedBrowserEndpoint: z.string().min(1), expiresAt: TimestampSchema,
+  allowedActions: z.array(z.enum(['read', 'write_input', 'resize'])), inputReplay: z.literal('forbidden'),
+});
+export const SurfaceViewSchema = z.strictObject({
+  viewId: z.string().min(1), channel: SurfaceChannelSchema.optional(), outputCursor: z.string().optional(),
+});
