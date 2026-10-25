@@ -4,6 +4,7 @@ import {
   EnvironmentAttachmentSchema,
   OpenSessionInputSchema,
   type OperationReceipt,
+  type RuntimeControlGrant,
 } from "../contracts/index.ts";
 import type { AttemptFactory } from "../persistence/attempt-factory.ts";
 import type { ExecutionRepository } from "../persistence/execution-repository.ts";
@@ -60,7 +61,12 @@ export class RuntimeSessionWorker {
       actionContext(item, payload.attachment === undefined ? [] : [payload.attachment.useGrant.id]),
       input,
     );
-    if (receipt.status !== "confirmed") { this.settle(item, receipt, () => {}); return; }
+    if (receipt.status !== "confirmed") {
+      this.settle(item, receipt, () => {}, () => {
+        this.state.closeSession(item.workspaceId, payload.sessionId);
+      });
+      return;
+    }
     const descriptor = bindingDescriptorSchema.parse(receipt.result);
     this.operations.settleConfirmed(item.id, receipt, () => {
       this.state.bindRuntime({ workspaceId: item.workspaceId, sessionId: payload.sessionId,
@@ -75,6 +81,11 @@ export class RuntimeSessionWorker {
       const task = this.work.getTask(item.workspaceId, payload.taskId);
       const session = this.execution.getSession(item.workspaceId, payload.sessionId);
       const attemptId = this.attempts.createObservedAttempt({ workspaceId: item.workspaceId, task, session, profile });
+      if (observation.value.execution.nativeExecutionRef !== undefined) {
+        this.state.saveAttemptNativeExecution(
+          item.workspaceId, attemptId, observation.value.execution.nativeExecutionRef,
+        );
+      }
       this.state.setAttemptPhase(item.workspaceId, attemptId,
         observation.value.execution.phase === "running" ? "running" : "waiting_input");
     }
@@ -94,7 +105,9 @@ export class RuntimeSessionWorker {
           generation: item.targetGeneration ?? 1 }), requestedActions: payload.requestedActions },
     );
     this.settle(item, receipt, (grant) => {
-      this.state.updateControlGrant(item.workspaceId, payload.sessionId, { ...descriptor, controlGrant: grant });
+      this.state.updateControlGrant(item.workspaceId, payload.sessionId, {
+        ...descriptor, controlGrant: this.scopedGrant(grant, payload.requestedActions),
+      });
     });
   }
 
@@ -112,7 +125,10 @@ export class RuntimeSessionWorker {
         return;
       }
       case "runtime.requestControl": {
-        const payload = z.strictObject({ sessionId: z.string() }).passthrough().parse(item.payload);
+        const payload = z.strictObject({ sessionId: z.string(), requestedActions: z.array(z.union([
+          z.literal("start_attempt"), z.literal("send_instruction"), z.literal("deliver_response"),
+          z.literal("request_stop"), z.literal("interactive_input"),
+        ])) }).passthrough().parse(item.payload);
         const descriptor = bindingDescriptorSchema.parse(this.state.runtimeBinding(item.workspaceId, payload.sessionId));
         const grant = z.strictObject({
           id: z.string(), mode: z.literal("control"),
@@ -122,21 +138,36 @@ export class RuntimeSessionWorker {
           ])),
           expiresAt: z.string().optional(), externalClientsMayAlsoControl: z.boolean(),
         }).parse(result);
-        this.state.updateControlGrant(item.workspaceId, payload.sessionId, { ...descriptor, controlGrant: grant });
+        this.state.updateControlGrant(item.workspaceId, payload.sessionId, {
+          ...descriptor, controlGrant: this.scopedGrant(grant, payload.requestedActions),
+        });
         return;
       }
       default: throw new TypeError(`Unsupported runtime session lookup stage ${item.operationKind}.`);
     }
   }
 
-  private settle<T>(item: OutboxItem, receipt: OperationReceipt<T>, confirmed: (result: T) => void): void {
+  private scopedGrant(
+    grant: RuntimeControlGrant,
+    requestedActions: readonly RuntimeControlGrant["allowedActions"][number][],
+  ): RuntimeControlGrant {
+    return {
+      ...grant,
+      allowedActions: grant.allowedActions.filter((action) => requestedActions.includes(action)),
+    };
+  }
+
+  private settle<T>(
+    item: OutboxItem, receipt: OperationReceipt<T>, confirmed: (result: T) => void,
+    failed: () => void = () => {},
+  ): void {
     switch (receipt.status) {
       case "confirmed": this.operations.settleConfirmed(item.id, receipt, () => confirmed(receipt.result)); return;
       case "accepted":
       case "running":
       case "unknown": this.operations.markForLookup(item.id, receipt); return;
       case "rejected":
-      case "failed": this.operations.markOutbox(item.id, "done", receipt); return;
+      case "failed": this.operations.settleTerminal(item.id, receipt.status, receipt, failed); return;
     }
   }
 }

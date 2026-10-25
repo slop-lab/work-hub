@@ -3,11 +3,9 @@ import { z } from "zod";
 import {
   InputSnapshotSchema,
   type AttemptStart,
-  type InputSnapshot,
   type InstructionInput,
   type OperationReceipt,
   type StopInput,
-  type WorkArea,
   WorkAreaSchema,
 } from "../contracts/index.ts";
 import type { AttemptFactory } from "../persistence/attempt-factory.ts";
@@ -16,6 +14,7 @@ import type { InteractionRepository } from "../persistence/interaction-repositor
 import type { OperationRepository, OutboxItem } from "../persistence/operation-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
+import { digest } from "../persistence/codec.ts";
 import { actionContext, callContext } from "./context.ts";
 import type { ConnectorRegistry } from "./connectors.ts";
 import {
@@ -23,6 +22,8 @@ import {
 } from "./runtime-codec.ts";
 import { RuntimeDeliveryWorker } from "./runtime-delivery-worker.ts";
 import { RuntimeSessionWorker } from "./runtime-session-worker.ts";
+import { nativeExecutionTarget, runtimeInputSnapshot, runtimeWorkAreas } from "./runtime-attempt-codec.ts";
+import { RuntimeOperationReducer } from "./runtime-operation-reducer.ts";
 
 const startSchema = z.strictObject({
   sessionId: z.string(), attemptId: z.string(),
@@ -38,6 +39,7 @@ export class RuntimeWorker {
   private readonly interactions: InteractionRepository;
   private readonly delivery: RuntimeDeliveryWorker;
   private readonly sessions: RuntimeSessionWorker;
+  private readonly reducer: RuntimeOperationReducer;
 
   constructor(input: {
     readonly connectors: ConnectorRegistry; readonly operations: OperationRepository;
@@ -49,17 +51,27 @@ export class RuntimeWorker {
     this.operations = input.operations;
     this.state = input.state;
     this.interactions = input.interactions;
-    this.delivery = new RuntimeDeliveryWorker(input.connectors, input.operations, input.interactions);
+    this.delivery = new RuntimeDeliveryWorker(
+      input.connectors, input.operations, input.interactions, input.state,
+    );
     this.sessions = new RuntimeSessionWorker(
       input.connectors, input.operations, input.state, input.execution, input.attempts, input.work,
     );
+    this.reducer = new RuntimeOperationReducer({
+      state: input.state, interactions: input.interactions,
+      delivery: this.delivery, sessions: this.sessions,
+    });
   }
 
   async start(item: OutboxItem): Promise<void> {
     const payload = startSchema.parse(item.payload);
     if (this.state.stopRequested(item.workspaceId, payload.attemptId)) {
-      this.state.finishAttempt(item.workspaceId, payload.attemptId, "canceled");
-      this.operations.markOutbox(item.id, "done", { status: "confirmed", effect: "attempt.canceled_before_input" });
+      this.operations.settleConfirmed(item.id, {
+        status: "confirmed", effect: "attempt.canceled_before_input",
+      }, () => {
+        this.state.finishAttempt(item.workspaceId, payload.attemptId, "canceled");
+        this.enqueueSessionDetach(item, payload.sessionId);
+      });
       return;
     }
     const descriptor = payload.descriptor ?? bindingDescriptorSchema.parse(
@@ -72,12 +84,14 @@ export class RuntimeWorker {
       hubAttemptId: payload.attemptId,
     };
     const input: AttemptStart = {
-      target, input: this.snapshot(snapshot), workAreas: this.workAreas(payload.workAreas),
+      target, input: runtimeInputSnapshot(snapshot), workAreas: runtimeWorkAreas(payload.workAreas),
     };
     const receipt = await this.connectors.runtime(item.installationId)
       .startAttempt(actionContext(item, [descriptor.controlGrant.id]), input);
     if (receipt.status !== "confirmed") {
-      this.settle(item, receipt, () => {});
+      this.settle(item, receipt, () => {}, () => {}, () => {
+        this.state.finishAttempt(item.workspaceId, payload.attemptId, "failed");
+      });
       return;
     }
     const observation = await this.connectors.runtime(item.installationId).inspectSession(
@@ -85,6 +99,11 @@ export class RuntimeWorker {
       runtimeTarget(descriptor, { sessionId: payload.sessionId, generation: item.targetGeneration ?? 1 }),
     );
     this.operations.settleConfirmed(item.id, receipt, () => {
+      if (receipt.result.nativeExecutionRef !== undefined) {
+        this.state.saveAttemptNativeExecution(
+          item.workspaceId, payload.attemptId, receipt.result.nativeExecutionRef,
+        );
+      }
       switch (observation.value.execution.phase) {
         case "running":
           this.state.setAttemptPhase(item.workspaceId, payload.attemptId, "running");
@@ -106,6 +125,12 @@ export class RuntimeWorker {
       referenceIds: z.array(z.string()),
       mode: z.union([z.literal("immediate"), z.literal("runtime_queued")]),
     }).parse(item.payload);
+    if (!this.state.attemptCanReceiveInput(item.workspaceId, payload.attemptId)) {
+      this.operations.markOutbox(item.id, "done", {
+        status: "rejected", code: "attempt_ended",
+      });
+      return;
+    }
     const descriptor = bindingDescriptorSchema.parse(
       this.state.runtimeBinding(item.workspaceId, payload.sessionId),
     );
@@ -120,6 +145,7 @@ export class RuntimeWorker {
       target: {
         ...runtimeTarget(descriptor, { sessionId: payload.sessionId, generation: item.targetGeneration ?? 1 }),
         hubAttemptId: payload.attemptId,
+        ...nativeExecutionTarget(this.state, item.workspaceId, payload.attemptId),
       },
       text: payload.text, referenceIds: payload.referenceIds, mode: payload.mode,
     };
@@ -149,6 +175,7 @@ export class RuntimeWorker {
       target: {
         ...runtimeTarget(descriptor, { sessionId: payload.sessionId, generation: item.targetGeneration ?? 1 }),
         hubAttemptId: payload.attemptId,
+        ...nativeExecutionTarget(this.state, item.workspaceId, payload.attemptId),
       },
       mode: payload.mode,
       ...(payload.reason === undefined ? {} : { reason: payload.reason }),
@@ -174,67 +201,29 @@ export class RuntimeWorker {
     await this.sessions.requestControl(item);
   }
 
-  applyLookup(item: OutboxItem, result: unknown): void {
-    switch (item.operationKind) {
-      case "runtime.startAttempt": {
-        return;
-      }
-      case "runtime.sendInstruction":
-        return;
-      case "runtime.deliverResponse": {
-        const payload = z.strictObject({ responseId: z.string() }).passthrough().parse(item.payload);
-        this.interactions.updateDelivery(payload.responseId, "acknowledged", { result });
-        return;
-      }
-      case "runtime.requestStop": {
-        const payload = z.strictObject({ attemptId: z.string() }).passthrough().parse(item.payload);
-        const effect = z.strictObject({
-          effect: z.union([
-            z.literal("request_accepted"), z.literal("work_termination_confirmed"),
-            z.literal("process_termination_confirmed"),
-          ]),
-        }).parse(result).effect;
-        if (effect !== "request_accepted") {
-          this.state.finishAttempt(item.workspaceId, payload.attemptId, "canceled");
-        }
-        return;
-      }
-      case "session.attachExisting": {
-        this.sessions.applyLookup(item, result); return;
-      }
-      case "runtime.requestControl": {
-        this.sessions.applyLookup(item, result); return;
-      }
-      default:
-        throw new TypeError(`Unsupported runtime lookup stage ${item.operationKind}.`);
-    }
-  }
-
-  private snapshot(input: z.infer<typeof InputSnapshotSchema>): InputSnapshot {
-    return {
-      id: input.id, digest: input.digest, taskId: input.taskId, taskRevision: input.taskRevision,
-      profileId: input.profileId, profileRevision: input.profileRevision,
-      instruction: input.instruction, selectedReferenceIds: input.selectedReferenceIds,
-      selectedResponseIds: input.selectedResponseIds,
-      contextItems: input.contextItems.map((item) => ({
-        sourceId: item.sourceId,
-        ...(item.sourceRevision === undefined ? {} : { sourceRevision: item.sourceRevision }),
-        ...(item.includedText === undefined ? {} : { includedText: item.includedText }),
-        ...(item.retainedContentRef === undefined ? {} : { retainedContentRef: item.retainedContentRef }),
-        ...(item.omissionReason === undefined ? {} : { omissionReason: item.omissionReason }),
-      })),
-      authorizedEffectKinds: input.authorizedEffectKinds, assembledAt: input.assembledAt,
-    };
-  }
-
-  private workAreas(input: readonly z.infer<typeof WorkAreaSchema>[]): readonly WorkArea[] {
-    return input.map((area) => ({
-      key: area.key, path: area.path, pathNamespace: area.pathNamespace,
-      requestedAccess: area.requestedAccess, preparation: area.preparation,
-      ...(area.expectedContentRevision === undefined ? {} : {
-        expectedContentRevision: area.expectedContentRevision,
+  async detachSession(item: OutboxItem): Promise<void> {
+    const payload = z.strictObject({ sessionId: z.string(),
+      observedAttemptId: z.string().optional() }).parse(item.payload);
+    const descriptor = bindingDescriptorSchema.parse(
+      this.state.runtimeBinding(item.workspaceId, payload.sessionId),
+    );
+    const receipt = await this.connectors.runtime(item.installationId).detachSession(
+      actionContext(item, [descriptor.controlGrant.id]),
+      runtimeTarget(descriptor, {
+        sessionId: payload.sessionId, generation: item.targetGeneration ?? 1,
       }),
-    }));
+    );
+    this.settle(item, receipt, () => {
+      this.state.closeSession(item.workspaceId, payload.sessionId, payload.observedAttemptId);
+    });
+  }
+
+  applyLookup(item: OutboxItem, result: unknown): void {
+    this.reducer.applyLookup(item, result);
+  }
+
+  applyFailure(item: OutboxItem, receipt: object): void {
+    this.reducer.applyFailure(item, receipt);
   }
 
   private settle<T>(
@@ -242,6 +231,7 @@ export class RuntimeWorker {
     receipt: OperationReceipt<T>,
     confirmed: (result: T) => void,
     uncertain: () => void = () => {},
+    failed: () => void = () => {},
   ): void {
     switch (receipt.status) {
       case "confirmed":
@@ -255,8 +245,21 @@ export class RuntimeWorker {
         return;
       case "rejected":
       case "failed":
-        this.operations.markOutbox(item.id, "done", receipt);
+        this.operations.settleTerminal(item.id, receipt.status, receipt, failed);
         return;
     }
   }
+
+  private enqueueSessionDetach(item: OutboxItem, sessionId: string): void {
+    const binding = this.state.runtimeBindingRecord(item.workspaceId, sessionId);
+    const payload = { sessionId };
+    this.operations.addOutbox({
+      workspaceId: item.workspaceId, commandId: item.commandId,
+      workType: "runtime.detachSession", connectorKind: "runtime",
+      installationId: item.installationId, stage: "detach_canceled_session",
+      targetId: sessionId, targetGeneration: binding.generation,
+      payload, inputDigest: digest(payload),
+    });
+  }
+
 }

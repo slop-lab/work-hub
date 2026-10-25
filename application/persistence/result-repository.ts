@@ -62,4 +62,10 @@ export class ResultRepository {
     return this.database.prepare(`${resultSelect} WHERE workspace_id = ? ORDER BY created_at DESC`)
       .all(workspaceId).map(toResult);
   }
+  forTask(workspaceId: string, taskId: string): readonly ResultView[] { return this.database.prepare(`${resultSelect} WHERE workspace_id = ? AND task_id = ? ORDER BY created_at DESC LIMIT 100`).all(workspaceId, taskId).map(toResult); }
+  forAttempts(workspaceId: string, attemptIds: readonly string[]): readonly ResultView[] {
+    if (attemptIds.length === 0) return [];
+    return this.database.prepare(`${resultSelect} WHERE workspace_id = ? AND attempt_id IN (${attemptIds.map(() => '?').join(',')}) ORDER BY created_at DESC LIMIT 100`).all(workspaceId, ...attemptIds).map(toResult);
+  }
+  recent(workspaceId: string, limit: number): readonly ResultView[] { return this.database.prepare(`${resultSelect} WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?`).all(workspaceId, limit).map(toResult); }
 }

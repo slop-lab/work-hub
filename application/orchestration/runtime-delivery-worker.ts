@@ -10,6 +10,7 @@ import {
 import { answerValueSchema } from "../domain/schema-common.ts";
 import type { InteractionRepository } from "../persistence/interaction-repository.ts";
 import type { OperationRepository, OutboxItem } from "../persistence/operation-repository.ts";
+import type { StateRepository } from "../persistence/state-repository.ts";
 import { actionContext } from "./context.ts";
 import type { ConnectorRegistry } from "./connectors.ts";
 import { nativeRef } from "./runtime-codec.ts";
@@ -18,15 +19,18 @@ export class RuntimeDeliveryWorker {
   private readonly connectors: ConnectorRegistry;
   private readonly operations: OperationRepository;
   private readonly interactions: InteractionRepository;
+  private readonly state: StateRepository;
 
   constructor(
     connectors: ConnectorRegistry,
     operations: OperationRepository,
     interactions: InteractionRepository,
+    state: StateRepository,
   ) {
     this.connectors = connectors;
     this.operations = operations;
     this.interactions = interactions;
+    this.state = state;
   }
 
   async deliver(item: OutboxItem): Promise<void> {
@@ -42,6 +46,10 @@ export class RuntimeDeliveryWorker {
     }
     if (validity.kind !== "attempt") {
       this.suppress(item, payload.responseId, "request_target_stale");
+      return;
+    }
+    if (!this.state.attemptCanReceiveInput(item.workspaceId, validity.target.hubAttemptId)) {
+      this.suppress(item, payload.responseId, "attempt_ended");
       return;
     }
     if (validity.nativeRequestRef === undefined) {
@@ -80,7 +88,13 @@ export class RuntimeDeliveryWorker {
       .deliverResponse(actionContext(item, [validity.target.controlGrantRef]), input);
     this.settle(item, receipt, () => {
       this.interactions.updateDelivery(payload.responseId, "acknowledged", receipt);
-    }, () => this.interactions.updateDelivery(payload.responseId, "unknown", receipt));
+    }, () => this.interactions.updateDelivery(payload.responseId, "unknown", receipt),
+    () => this.interactions.updateDelivery(payload.responseId, "rejected", receipt));
+  }
+
+  applyFailure(item: OutboxItem, receipt: object): void {
+    const payload = z.strictObject({ responseId: z.string() }).passthrough().parse(item.payload);
+    this.interactions.updateDelivery(payload.responseId, "rejected", receipt);
   }
 
   private suppress(item: OutboxItem, responseId: string, code: string): void {
@@ -102,6 +116,7 @@ export class RuntimeDeliveryWorker {
     receipt: OperationReceipt<T>,
     confirmed: (result: T) => void,
     uncertain: () => void,
+    failed: () => void,
   ): void {
     switch (receipt.status) {
       case "confirmed": this.operations.settleConfirmed(item.id, receipt, () => confirmed(receipt.result)); return;
@@ -109,7 +124,7 @@ export class RuntimeDeliveryWorker {
       case "running":
       case "unknown": uncertain(); this.operations.markForLookup(item.id, receipt); return;
       case "rejected":
-      case "failed": this.operations.markOutbox(item.id, "done", receipt); return;
+      case "failed": this.operations.settleTerminal(item.id, receipt.status, receipt, failed); return;
     }
   }
 }

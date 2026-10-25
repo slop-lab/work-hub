@@ -31,9 +31,9 @@ export class RuntimeEventReconciler {
     if (publication === false) return;
     const sourceEventId = event.sourceEventId ??
       `${event.streamScope}:${event.sourceSequence ?? event.sourceCursor ?? event.observedAt}`;
-    if (!this.input.state.claimInboundEvent({ workspaceId, installationId, sourceEventId,
-      bindingGeneration: event.bindingGeneration, event })) return;
-    switch (event.payload.type) {
+    this.input.state.claimInboundEvent({ workspaceId, installationId, sourceEventId,
+      bindingGeneration: event.bindingGeneration, event }, () => {
+      switch (event.payload.type) {
       case "output":
         this.input.state.saveOutput({ workspaceId, sessionId,
           ...(event.payload.item.hubAttemptId === undefined ? {} : {
@@ -94,8 +94,9 @@ export class RuntimeEventReconciler {
           item: { kind: "gap", reason: event.payload.reason, observedAt: event.observedAt } });
         return;
       case "extension": return;
-      default: return assertNever(event.payload);
-    }
+        default: return assertNever(event.payload);
+      }
+    });
   }
 
   applyExecution(workspaceId: string, attemptId: string, observation: {
