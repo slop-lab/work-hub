@@ -69,6 +69,10 @@ Primary personas:
 
 Rules: titles are sentence case; labels are concise and never decorative uppercase; body text is never smaller than the Small token; unbroken identifiers use mono and `overflow-wrap: anywhere`.
 
+Task and section headings keep CJK words intact with `word-break: keep-all`.
+Long unbroken identifiers may wrap as an overflow fallback without forcing
+ordinary Korean, Japanese or Chinese words to split between glyphs.
+
 ## 4. Spacing & Layout
 
 ### Scale

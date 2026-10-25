@@ -29,6 +29,26 @@ test("Given the real product routes, when rendered at required breakpoints, then
 		await page.goto(`${app.url}/#/backlog`);
 		await page.getByRole("button", { name: /Open 릴리스 경계를/ }).click();
 		await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 375);
+		await expect(page.locator('h1')).toContainText('릴리스');
+		const wordLines = await page.locator('h1').evaluate((heading) => {
+			const node = heading.firstChild;
+			if (!(node instanceof Text)) throw new TypeError('Task title text missing');
+			const start = node.data.indexOf('작업');
+			if (start < 0) throw new TypeError('CJK word missing');
+			const range = document.createRange();
+			range.setStart(node, start);
+			range.setEnd(node, start + 2);
+			return new Set([...range.getClientRects()].map((rect) => rect.top)).size;
+		});
+		expect(wordLines).toBe(1);
+		const headingFits = await page.locator('h1').evaluate((heading) => {
+			const hero = heading.closest('.task-hero');
+			if (hero === null) throw new TypeError('Task hero missing');
+			const range = document.createRange();
+			range.selectNodeContents(heading);
+			return [...range.getClientRects()].every((rect) => rect.right <= hero.getBoundingClientRect().right + 1);
+		});
+		expect(headingFits).toBe(true);
 		await page.screenshot({ path: ".omo/evidence/product-ui-final/cjk-task-375.png", fullPage: true });
 		await page.getByRole("button", { name: "Delegate" }).click();
 		await page.getByLabel("Environment choice").selectOption("provision");

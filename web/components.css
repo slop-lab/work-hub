@@ -281,6 +281,10 @@
 .task-hero h1 {
 	max-inline-size: 28ch;
 }
+.task-hero > :first-child {
+	min-inline-size: 0;
+	max-inline-size: 100%;
+}
 .task-hero__actions {
 	display: flex;
 	gap: var(--space-2);
