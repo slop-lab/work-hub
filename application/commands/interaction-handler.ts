@@ -135,6 +135,12 @@ export class InteractionHandler {
       throw conflict("request_not_open", "Only an open request can be reassigned.");
     }
     if (!this.interactions.authority.recipientEligible({ workspaceId: actor.workspaceId, projectId: request.projectId, ...(request.taskId ? { taskId: request.taskId } : {}), recipient: command.payload.recipient })) throw invalid('recipient_unavailable', 'Select an enabled recipient in the same project.');
+    if (command.payload.recipient.kind === 'agent_session' &&
+      (command.payload.recipient.sessionId !== request.sessionId || request.attemptId === undefined ||
+        request.bindingGeneration === undefined || request.responseRoute !== 'none' ||
+        !this.interactions.targetCurrent({ ...request, recipient: command.payload.recipient }))) {
+      throw conflict('request_target_stale', 'Agent reassignment requires the request’s active pinned session and attempt.');
+    }
     const updated = this.interactions.reassign(actor.workspaceId, id, command.payload.recipient);
     return this.confirmed("request.reassigned", "request", id, updated.revision);
   }

@@ -1,5 +1,7 @@
 import type { Actor } from "../domain/authorization.ts";
+import { z } from 'zod';
 import { requireProject } from "../domain/authorization.ts";
+import { canActOnRequest } from '../domain/request-action.ts';
 import { forbidden } from "../domain/errors.ts";
 import type {
   DashboardView,
@@ -19,7 +21,7 @@ import type { OperationRepository } from "../persistence/operation-repository.ts
 import type { QueryRepository } from "../persistence/query-repository.ts";
 import type { ResultRepository } from "../persistence/result-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
-import { paginate } from './pagination.ts';
+import { decodeCursor, encodeCursor } from './pagination.ts';
 
 export type TaskListQuery = {
   readonly projectId?: string;
@@ -37,6 +39,7 @@ export type Page<T> = {
   readonly nextCursor?: string;
   readonly snapshotCursor: string;
 };
+export type ContextQuery = { readonly route: 'dashboard' | 'backlog' | 'task' | 'session' | 'environments' | 'settings' | 'operation' | 'showcase'; readonly id?: string };
 
 export class QueryService {
   private readonly work: WorkRepository;
@@ -75,23 +78,17 @@ export class QueryService {
   listTasks(actor: Actor, input: TaskListQuery = {}): Page<TaskView> {
     const limit = Math.min(Math.max(input.limit ?? 100, 1), 100);
     const runtimeSession = actor.role === 'runtime' ? this.execution.listSessions(actor.workspaceId).find((session) => session.id === actor.sessionId && session.bindingGeneration === actor.bindingGeneration) : undefined;
-    const search = input.search?.toLocaleLowerCase();
-    const filtered = this.work.listTasks(actor.workspaceId).filter((task) =>
-      (actor.role === "administrator" || actor.projectIds.includes(task.projectId)) &&
-      (actor.role !== 'runtime' || task.id === runtimeSession?.taskId) &&
-      (input.includeArchived === true || task.archivedAt === undefined) &&
-      (input.projectId === undefined || task.projectId === input.projectId) &&
-      (input.status === undefined || task.status === input.status) &&
-      (input.ownerId === undefined || task.ownerId === input.ownerId) &&
-      (input.priority === undefined || task.priority === input.priority) &&
-      (search === undefined || `${task.title}\n${task.description}\n${task.expectedOutcome ?? ''}`.toLocaleLowerCase().includes(search)),
-    );
     const { cursor, ...query } = input;
-    const page = paginate({ items: filtered, key: (task) => `${String(task.priority ?? 50).padStart(3, '0')}:${9999999999999 - Date.parse(task.updatedAt)}:${task.id}`, query: JSON.stringify({ actorId: actor.id, workspaceId: actor.workspaceId, ...query }), snapshot: this.query.watermark(actor.workspaceId), limit, ...(cursor ? { cursor } : {}) });
+    const queryText = JSON.stringify({ actorId: actor.id, workspaceId: actor.workspaceId, ...query });
+    const decoded = decodeCursor({ query: queryText, snapshot: this.query.watermark(actor.workspaceId), ...(cursor === undefined ? {} : { cursor }) });
+    const after = decoded.after === '' ? undefined : z.tuple([z.number(), z.string(), z.string()]).parse(JSON.parse(decoded.after));
+    const rows = this.work.listTasksPage({ workspaceId: actor.workspaceId, ...(actor.role === 'administrator' ? {} : { allowedProjectIds: actor.projectIds }), ...(actor.role === 'runtime' && runtimeSession !== undefined ? { runtimeTaskId: runtimeSession.taskId } : {}), ...(input.projectId === undefined ? {} : { projectId: input.projectId }), ...(input.status === undefined ? {} : { status: input.status }), ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }), ...(input.priority === undefined ? {} : { priority: input.priority }), ...(input.search === undefined || input.search.length === 0 ? {} : { search: input.search }), includeArchived: input.includeArchived === true, ...(after === undefined ? {} : { after: { priority: after[0], updatedAt: after[1], id: after[2] } }), limit });
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
     return {
-      items: page.items,
-      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
-      snapshotCursor: page.snapshotCursor,
+      items,
+      ...(rows.length > limit && last !== undefined ? { nextCursor: encodeCursor({ queryHash: decoded.queryHash, after: JSON.stringify([last.priority ?? 50, last.updatedAt, last.id]), snapshot: decoded.snapshot }) } : {}),
+      snapshotCursor: decoded.snapshot,
     };
   }
 
@@ -148,14 +145,64 @@ export class QueryService {
     return this.operations.findReceipt(actor.workspaceId, actor.id, commandId)?.receipt;
   }
 
-  getOutput(actor: Actor, sessionId: string, query: { readonly after: number; readonly limit: number }) {
+  getOutput(actor: Actor, sessionId: string, query: { readonly attemptId?: string; readonly after: number; readonly limit: number }) {
     const session = this.getSession(actor, sessionId).session;
-    const page = this.query.outputPage(actor.workspaceId, { sessionId, after: query.after, limit: Math.max(1, Math.min(query.limit, 100)) });
+    if (query.attemptId !== undefined) {
+      const attempt = this.execution.getAttempt(actor.workspaceId, query.attemptId);
+      if (attempt.sessionId !== sessionId) throw forbidden('The attempt is outside the requested session.');
+    }
+    const page = this.query.outputPage(actor.workspaceId, { sessionId, ...(query.attemptId === undefined ? {} : { attemptId: query.attemptId }), after: query.after, limit: Math.max(1, Math.min(query.limit, 100)) });
     return { ...page, session, items: page.items.filter((item) => actor.role !== 'runtime' || item['attemptId'] === actor.attemptId) };
+  }
+
+  getOperation(actor: Actor, id: string): Readonly<Record<string, unknown>> {
+    const operation = this.query.operation(actor.workspaceId, id)[0];
+    if (operation === undefined || !this.query.operationVisible(actor, id)) throw forbidden('The operation is unavailable in this actor scope.');
+    return operation;
   }
 
   dashboard(actor: Actor): DashboardView {
     return this.snapshot(actor).dashboard;
+  }
+
+  context(actor: Actor, input: ContextQuery): HubSnapshot {
+    const requests = input.route === 'task' && input.id !== undefined ? this.interactions.requestsForTask(actor.workspaceId, input.id) : input.route === 'session' ? this.interactions.requestsForSession(actor.workspaceId, input.id ?? this.execution.latestSession(actor.workspaceId)?.id ?? '') : input.route === 'dashboard' ? this.interactions.openRequests(actor.workspaceId, 100).filter((request) => canActOnRequest(actor, request)) : [];
+    const task = input.route === 'task' && input.id !== undefined ? this.getTask(actor, input.id) : undefined;
+    const selectedSession = input.route === 'session' ? (input.id === undefined ? this.execution.latestSession(actor.workspaceId) : this.execution.getSession(actor.workspaceId, input.id)) : undefined;
+    if (selectedSession !== undefined) requireProject(actor, selectedSession.projectId);
+    const sessions = task === undefined ? selectedSession === undefined ? [] : [selectedSession] : this.execution.sessionsForTask(actor.workspaceId, task.id);
+    const attempts = task !== undefined ? this.execution.attemptsForTask(actor.workspaceId, task.id) : selectedSession !== undefined ? this.execution.attemptsForSession(actor.workspaceId, selectedSession.id) : input.route === 'dashboard' ? this.execution.activeAttempts(actor.workspaceId, 50).filter((attempt) => actor.role === 'administrator' || actor.projectIds.includes(this.work.getTask(actor.workspaceId, attempt.taskId).projectId)) : [];
+    const dashboardResults = input.route === 'dashboard' ? this.results.recent(actor.workspaceId, 50).filter((result) => { const candidate = this.work.getTask(actor.workspaceId, result.taskId); return (actor.role === 'administrator' || actor.projectIds.includes(candidate.projectId)) && !['done', 'canceled'].includes(candidate.status); }) : [];
+    const results = task !== undefined ? this.results.forTask(actor.workspaceId, task.id) : selectedSession !== undefined ? this.results.forAttempts(actor.workspaceId, attempts.map((attempt) => attempt.id)) : dashboardResults;
+    const taskIds = new Set([...(task === undefined ? [] : [task.id]), ...attempts.map((attempt) => attempt.taskId), ...results.map((result) => result.taskId), ...requests.flatMap((request) => request.taskId === undefined ? [] : [request.taskId])]);
+    const tasks = [...taskIds].map((id) => this.work.getTask(actor.workspaceId, id)).filter((candidate) => actor.role === 'administrator' || actor.projectIds.includes(candidate.projectId));
+    const sessionIds = new Set(sessions.map((session) => session.id));
+    const bindings = input.route === 'environments' ? this.environments.listBindings(actor.workspaceId).filter((binding) => actor.role === 'administrator' || actor.bindingIds.includes(binding.id)) : [...sessionIds].flatMap((id) => this.environments.bindingsForSession(actor.workspaceId, id));
+    const operations = (input.route === 'operation' && input.id !== undefined ? [this.getOperation(actor, input.id)] : input.route === 'dashboard' ? this.query.operationalIssues(actor.workspaceId, 50) : []).filter((operation) => typeof operation['id'] === 'string' && this.query.operationVisible(actor, operation['id']));
+    const requestIds = requests.map((request) => request.id);
+    const active = input.route === 'dashboard' ? attempts : [];
+    const open = input.route === 'dashboard' ? requests : [];
+    const deliveryProblems = input.route === 'dashboard' ? this.query.deliveryProblems(actor.workspaceId, 50).filter((delivery) => {
+      const requestId = delivery['requestId'];
+      if (typeof requestId !== 'string') return false;
+      const request = this.interactions.getRequest(actor.workspaceId, requestId);
+      return actor.role === 'administrator' || actor.projectIds.includes(request.projectId);
+    }) : [];
+    return {
+      projects: [], users: [], tasks,
+      entries: task === undefined ? [] : this.query.entriesForTask(actor.workspaceId, task.id),
+      requests,
+      responses: this.query.responsesForRequests(actor.workspaceId, requestIds),
+      deliveries: deliveryProblems,
+      sessions, attempts,
+      environmentRegistrations: this.environments.listRegistrations(actor.workspaceId).filter((registration) => actor.role === 'administrator' || registration.allowedProjectIds.some((id) => actor.projectIds.includes(id))),
+      environmentBindings: bindings,
+      results,
+      references: task !== undefined ? this.query.referencesForTask(actor.workspaceId, task.id) : selectedSession !== undefined ? this.query.referencesForTask(actor.workspaceId, selectedSession.taskId) : [],
+      output: [], operations,
+      profiles: this.execution.listProfiles(actor.workspaceId).filter((profile) => actor.role === 'administrator' || actor.profileIds.includes(profile.id)),
+      dashboard: { answerNeeded: open.filter((request) => request.kind === 'question'), approvalNeeded: open.filter((request) => request.kind === 'approval'), deliveryProblems, activeAttempts: active, resultsToReview: results, operationalIssues: operations, snapshotCursor: this.query.watermark(actor.workspaceId) },
+    };
   }
 
   snapshot(actor: Actor): HubSnapshot {
@@ -177,7 +224,7 @@ export class QueryService {
     const bindings = this.environments.listBindings(actor.workspaceId).filter((binding) => sessionIds.has(binding.sessionId));
     const targetIds = new Set([...taskIds, ...sessionIds, ...attemptIds, ...bindings.map((binding) => binding.id)]);
     const operations = this.query.operations(actor.workspaceId).filter((operation) => actor.role === 'administrator' || (typeof operation['targetId'] === 'string' && targetIds.has(operation['targetId'])));
-    const openRequests = requests.filter((request) => request.status === 'open' && this.canActOnRequest(actor, request));
+    const openRequests = requests.filter((request) => request.status === 'open' && canActOnRequest(actor, request));
     return {
       projects: this.query.projects(actor.workspaceId).filter((project) =>
         actor.role === "administrator" ||
@@ -215,16 +262,4 @@ export class QueryService {
     };
   }
 
-  private canActOnRequest(actor: Actor, request: RequestView): boolean {
-    const kind = request.recipient["kind"];
-    if (kind === "user") return request.recipient["userId"] === actor.id;
-    if (kind === "project_members") {
-      return request.recipient["projectId"] === request.projectId &&
-        (actor.role === "administrator" || actor.projectIds.includes(request.projectId));
-    }
-    if (kind === "agent_session") {
-      return actor.role === "runtime" && request.recipient["sessionId"] === actor.sessionId;
-    }
-    return false;
-  }
 }

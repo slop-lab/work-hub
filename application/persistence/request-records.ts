@@ -22,6 +22,16 @@ export class RequestRecords {
     return toRequest(row);
   }
   listRequests(workspaceId: string): readonly RequestView[] { return this.database.prepare('SELECT * FROM requests WHERE workspace_id=? ORDER BY updated_at DESC,id').all(workspaceId).map(toRequest); }
+  forTask(workspaceId: string, taskId: string): readonly RequestView[] { return this.database.prepare('SELECT * FROM requests WHERE workspace_id=? AND task_id=? ORDER BY updated_at DESC,id LIMIT 100').all(workspaceId, taskId).map(toRequest); }
+  forSession(workspaceId: string, sessionId: string): readonly RequestView[] { return this.database.prepare('SELECT * FROM requests WHERE workspace_id=? AND session_id=? ORDER BY updated_at DESC,id LIMIT 100').all(workspaceId, sessionId).map(toRequest); }
+  openRequests(workspaceId: string, limit: number): readonly RequestView[] { return this.database.prepare("SELECT * FROM requests WHERE workspace_id=? AND status='open' ORDER BY updated_at DESC,id LIMIT ?").all(workspaceId, limit).map(toRequest); }
+  agentRequests(input: { readonly workspaceId: string; readonly sessionId: string; readonly attemptId: string; readonly bindingGeneration: number }) {
+    return this.database.prepare(`SELECT * FROM requests WHERE workspace_id=? AND session_id=?
+      AND attempt_id=? AND binding_generation=? AND status='open'
+      AND json_extract(recipient_json,'$.kind')='agent_session'
+      AND json_extract(recipient_json,'$.sessionId')=? ORDER BY created_at,id LIMIT 100`)
+      .all(input.workspaceId, input.sessionId, input.attemptId, input.bindingGeneration, input.sessionId).map(toRequest);
+  }
   changeStatus(workspaceId: string, id: string, status: 'withdrawn' | 'expired' | 'superseded'): RequestView {
     const now = this.clock.now().toISOString();
     this.database.prepare('UPDATE requests SET revision=revision+1,status=?,updated_at=? WHERE workspace_id=? AND id=?').run(status, now, workspaceId, id);

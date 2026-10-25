@@ -18,6 +18,9 @@ export class InteractionRepository {
   createRequest(input: NewRequest) { return this.requests.createRequest(input); }
   getRequest(workspaceId: string, id: string) { return this.requests.getRequest(workspaceId, id); }
   listRequests(workspaceId: string) { return this.requests.listRequests(workspaceId); }
+  requestsForTask(workspaceId: string, taskId: string) { return this.requests.forTask(workspaceId, taskId); }
+  requestsForSession(workspaceId: string, sessionId: string) { return this.requests.forSession(workspaceId, sessionId); }
+  openRequests(workspaceId: string, limit: number) { return this.requests.openRequests(workspaceId, limit); }
   changeStatus(workspaceId: string, id: string, status: 'withdrawn' | 'expired' | 'superseded') { return this.requests.changeStatus(workspaceId, id, status); }
   reassign(workspaceId: string, id: string, recipient: object) { return this.requests.reassign(workspaceId, id, recipient); }
   unresolvedBlocking(workspaceId: string, taskId: string) { return this.requests.unresolvedBlocking(workspaceId, taskId); }

@@ -5,7 +5,7 @@ import type { RequestView } from '../domain/model.ts';
 import { digest, parseJson, type Clock } from './codec.ts';
 import { toRequest as toRequestRecord } from './request-codec.ts';
 
-type RequestScope = Pick<RequestView, 'workspaceId' | 'projectId' | 'taskId' | 'sessionId' | 'attemptId' | 'bindingGeneration' | 'kind' | 'validity' | 'responseRoute'>;
+type RequestScope = Pick<RequestView, 'workspaceId' | 'projectId' | 'taskId' | 'sessionId' | 'attemptId' | 'bindingGeneration' | 'kind' | 'validity' | 'responseRoute'> & { readonly recipient?: Readonly<Record<string, unknown>> };
 
 export type RequestContext = {
   readonly workspaceId: string; readonly projectId: string; readonly taskId?: string;
@@ -38,6 +38,11 @@ export class InteractionAuthority {
   }
   targetCurrent(request: RequestScope): boolean {
     if (!this.validityMatchesContext(request)) return false;
+    if (request.recipient?.['kind'] === 'agent_session' && !this.database.prepare(`SELECT a.id FROM attempts a
+      JOIN sessions s ON s.id=a.session_id AND s.workspace_id=a.workspace_id
+      WHERE a.workspace_id=? AND a.id=? AND a.session_id=? AND a.unresolved=1
+        AND s.lifecycle='open' AND s.active_attempt_id=a.id AND s.binding_generation=?`)
+      .get(request.workspaceId, request.attemptId ?? '', request.sessionId ?? '', request.bindingGeneration ?? -1)) return false;
     const validity = RequestValiditySchema.parse(request.validity);
     if (validity.expiresAt && Date.parse(validity.expiresAt) <= this.clock.now().getTime()) return false;
     if (validity.kind !== 'attempt') return true;

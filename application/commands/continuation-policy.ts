@@ -10,6 +10,7 @@ import { conflict, unsupported } from "../domain/errors.ts";
 import type { ExecutionProfileView } from "../domain/model.ts";
 import type { EnvironmentRepository } from "../persistence/environment-repository.ts";
 import type { ExecutionRepository } from "../persistence/execution-repository.ts";
+import type { ObservationRepository } from "../persistence/observation-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
 import { requireRevision } from "./guards.ts";
 
@@ -17,7 +18,10 @@ type ContinuationPolicyDependencies = {
   readonly execution: ExecutionRepository;
   readonly environments: EnvironmentRepository;
   readonly state: StateRepository;
-  readonly installationUsable: (workspaceId: string, installationId: string) => boolean;
+  readonly observation: ObservationRepository;
+  readonly installationUsable: (
+    workspaceId: string, kind: "execution" | "agent_runtime", installationId: string,
+  ) => boolean;
   readonly runtimeSupports: (installationId: string, names: readonly string[]) => boolean;
   readonly now: () => Date;
 };
@@ -39,7 +43,9 @@ export class ContinuationPolicy {
 
   private requireUsable(workspaceId: string, profile: ExecutionProfileView): void {
     if (!profile.enabled) throw unsupported("profile_disabled", "The selected execution profile is disabled.");
-    if (!this.dependencies.installationUsable(workspaceId, profile.runtimeInstallationId)) {
+    if (!this.dependencies.installationUsable(
+      workspaceId, "agent_runtime", profile.runtimeInstallationId,
+    )) {
       throw unsupported("connector_disabled", "The selected runtime installation is disabled or unavailable.");
     }
     if (!this.dependencies.runtimeSupports(profile.runtimeInstallationId, profile.requiredCapabilities)) {
@@ -97,6 +103,10 @@ export class ContinuationPolicy {
     if (binding === undefined || binding.useGrant === undefined) {
       throw conflict("environment_grant_missing", "The attached environment has no verified use grant.");
     }
+    if (this.dependencies.observation.environmentSafety(workspaceId, sessionId) !== "fresh") {
+      throw conflict("environment_observation_unsafe",
+        "The attached environment is stale, unavailable, or has not been safely observed; reconcile it before continuing.");
+    }
     const mode = binding.sourceKind === "registration" ? "existing" : "provision";
     if (!profile.allowedEnvironmentModes.includes(mode)) {
       throw unsupported("environment_mode_unsupported", "The profile does not allow reuse of this environment mode.");
@@ -105,6 +115,15 @@ export class ContinuationPolicy {
     if (useGrant.expiresAt !== undefined && useGrant.expiresAt <= this.dependencies.now().toISOString()) {
       throw conflict("environment_grant_expired", "The environment use grant has expired.");
     }
-    return useGrant.allowedWorkAreas;
+    const workAreas = useGrant.allowedWorkAreas.filter((area) => binding.workAreaKeys.includes(area.key));
+    if (workAreas.length !== binding.workAreaKeys.length || workAreas.some((area) =>
+      area.requestedAccess === 'write' && binding.accessMode !== 'write')) {
+      throw conflict('environment_grant_mismatch', 'The environment grant exceeds the selected work areas.');
+    }
+    if (workAreas.some((area) => area.requestedAccess === 'write') &&
+      !profile.allowedEffects.includes('work.write')) {
+      throw unsupported('effect_not_authorized', 'The current profile does not authorize writes to the reused workspace.');
+    }
+    return workAreas;
   }
 }

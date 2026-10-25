@@ -6,12 +6,14 @@ import { digest } from "../persistence/codec.ts";
 import type { EnvironmentRepository } from "../persistence/environment-repository.ts";
 import type { ExecutionRepository } from "../persistence/execution-repository.ts";
 import type { OperationRepository } from "../persistence/operation-repository.ts";
+import type { ObservationRepository } from "../persistence/observation-repository.ts";
 import type { ResultRepository } from "../persistence/result-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
 import { authorizeSessionControl, authorizeTask, requireRevision } from "./guards.ts";
 import type { CommandOf, CommandResult } from "./types.ts";
 import { ContinuationPolicy } from "./continuation-policy.ts";
+import { prepareRetryEnvironment } from "./retry-environment.ts";
 
 type ContinuationDependencies = {
   readonly work: WorkRepository;
@@ -20,8 +22,11 @@ type ContinuationDependencies = {
   readonly operations: OperationRepository;
   readonly environments: EnvironmentRepository;
   readonly results: ResultRepository;
+  readonly observation: ObservationRepository;
   readonly state: StateRepository;
-  readonly installationUsable: (workspaceId: string, installationId: string) => boolean;
+  readonly installationUsable: (
+    workspaceId: string, kind: "execution" | "agent_runtime", installationId: string,
+  ) => boolean;
   readonly runtimeSupports: (installationId: string, names: readonly string[]) => boolean;
   readonly now: () => Date;
 };
@@ -103,7 +108,9 @@ export class ContinuationHandler {
     if (task.archivedAt !== undefined || task.status === "done" || task.status === "canceled") {
       throw conflict("task_not_delegable", "Reopen an unarchived task before retrying work.");
     }
-    const profile = this.policy.profileForStart(actor, predecessor.profileId, command.expected?.profile);
+    const profile = this.policy.profileForStart(
+      actor, command.payload.profileId ?? predecessor.profileId, command.expected?.profile,
+    );
     const priorInstruction = predecessor.inputSnapshot["instruction"];
     const instruction = command.payload.input === "snapshot" && typeof priorInstruction === "string"
       ? priorInstruction
@@ -126,8 +133,31 @@ export class ContinuationHandler {
         },
       });
     }
-    if (!profile.allowedEnvironmentModes.includes("none")) {
-      throw unsupported("environment_mode_unsupported", "Retry requires an explicitly supported environment mode.");
+    const selectedEnvironment = command.payload.environment ?? profile.defaultEnvironment;
+    const selectedMode = Reflect.get(selectedEnvironment, "mode");
+    if (selectedMode === "provision") {
+      const installationId = Reflect.get(selectedEnvironment, "executionInstallationId");
+      if (typeof installationId !== "string" || !this.dependencies.installationUsable(
+        actor.workspaceId, "execution", installationId,
+      )) {
+        throw unsupported("connector_disabled",
+          "The selected execution installation is disabled or unavailable.");
+      }
+    }
+    if (selectedMode === "existing") {
+      const registrationId = Reflect.get(selectedEnvironment, "registrationId");
+      if (typeof registrationId !== "string") {
+        throw conflict("registration_not_found", "The selected environment registration is unavailable.");
+      }
+      const executionInstallationId = this.dependencies.environments.getRegistration(
+        actor.workspaceId, registrationId,
+      ).executionInstallationId;
+      if (!this.dependencies.installationUsable(
+        actor.workspaceId, "execution", executionInstallationId,
+      )) {
+        throw unsupported("connector_disabled",
+          "The selected execution installation is disabled or unavailable.");
+      }
     }
     const created = this.dependencies.attempts.createRetryHandoff({
       workspaceId: actor.workspaceId,
@@ -136,12 +166,20 @@ export class ContinuationHandler {
       predecessor,
       context: command.payload.input,
     });
+    const retryEnvironment = prepareRetryEnvironment({ actor, task, profile,
+      ...(command.payload.environment === undefined ? {} : { requested: command.payload.environment }),
+      ...(command.expected?.registration === undefined ? {} : {
+        expectedRegistrationRevision: command.expected.registration,
+      }),
+      sessionId: created.session.id, attemptId: created.attempt.id,
+      environments: this.dependencies.environments, state: this.dependencies.state,
+      now: this.dependencies.now() });
     const operationId = this.dependencies.operations.addOutbox({
       workspaceId: actor.workspaceId,
       commandId: command.commandId,
       workType: "delegation.advance",
-      connectorKind: "runtime",
-      installationId: profile.runtimeInstallationId,
+      connectorKind: retryEnvironment.connectorKind,
+      installationId: retryEnvironment.installationId,
       stage: "open_new_session",
       targetId: created.attempt.id,
       payload: {
@@ -150,7 +188,8 @@ export class ContinuationHandler {
         attemptId: created.attempt.id,
         profileId: profile.id,
         profileRevision: profile.revision,
-        environment: { mode: "none" },
+        environment: retryEnvironment.environment,
+        ...(retryEnvironment.bindingId === undefined ? {} : { bindingId: retryEnvironment.bindingId }),
         inputSnapshot: created.attempt.inputSnapshot,
       },
       inputDigest: digest(created.attempt.inputSnapshot),

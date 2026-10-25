@@ -27,7 +27,11 @@ export function validatePublication(actor: Actor, payload: CommandOf<'request.cr
     if (payload.answerSchema.kind !== 'approval' || payload.validity.kind !== 'attempt' || !payload.actionDescription || payload.validity.actionDigest !== digest(payload.actionDescription) || !payload.validity.policyRevision) throw invalid('approval_scope_missing', 'Approval must bind the exact described action, policy, attempt and target.');
   }
   if (payload.responseRoute === 'native' && (payload.validity.kind !== 'attempt' || !payload.validity.nativeRequestRef)) throw invalid('native_request_missing', 'Native delivery requires a pinned native request identity.');
-  if (payload.recipient.kind === 'agent_session' && payload.recipient.sessionId !== payload.sessionId) throw conflict('request_context_mismatch', 'An agent recipient must be the explicitly targeted session.');
+  if (payload.recipient.kind === 'agent_session') {
+    if (payload.recipient.sessionId !== payload.sessionId || payload.attemptId === undefined || payload.bindingGeneration === undefined) throw conflict('request_context_mismatch', 'An agent recipient requires an explicit session, attempt and binding generation.');
+    if (payload.responseRoute !== 'none') throw invalid('agent_response_route_invalid', 'An agent answer is committed to the Hub, not delivered back to the answering runtime.');
+    if (!interactions.authority.targetCurrent(context)) throw conflict('request_target_stale', 'The agent recipient attempt is no longer active.');
+  }
   if (payload.supersedesRequestId) {
     const previous = interactions.getRequest(actor.workspaceId, payload.supersedesRequestId);
     if (previous.projectId !== payload.projectId || previous.taskId !== payload.taskId || (actor.role !== 'administrator' && previous.authorId !== actor.id)) throw forbidden('A correction must preserve the original request context and authority.');

@@ -79,5 +79,10 @@ test('snapshot and dashboard projections never expose another project’s questi
     assert.equal(hub.snapshot(member).requests.length, 0);
     assert.equal(hub.snapshot(member).tasks.length, 0);
     assert.equal(hub.getDashboard(member).answerNeeded.length, 0);
+    assert.equal(hub.contextSnapshot(member, { route: 'dashboard' }).requests.length, 0);
+    const removedProjectAccess = { ...admin, role: 'member', projectIds: ['project-default'] } as const;
+    const personal = await hub.execute(admin, { commandId: 'private-personal-question', type: 'request.create', payload: { kind: 'question', projectId, taskId, recipient: { kind: 'user', userId: admin.id }, prompt: 'Private personal question', referenceIds: [], answerSchema: { kind: 'text', minLength: 1, maxLength: 100 }, blocking: 'none', validity: { kind: 'task', taskId } } });
+    assert.equal(personal.status, 'confirmed');
+    assert.equal(hub.contextSnapshot(removedProjectAccess, { route: 'dashboard' }).requests.length, 0);
   } finally { hub.close(); rmSync(root, { recursive: true }); }
 });
