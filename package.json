@@ -1,0 +1,33 @@
+{
+  "name": "work-hub",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "bootstrap": "node application/api/bootstrap.ts",
+    "dev": "node --watch application/api/server.ts",
+    "start": "node application/api/server.ts",
+    "build": "node scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "test:contracts": "node --test tests/contracts*.test.ts",
+    "test:acceptance": "node --test tests/acceptance*.test.ts",
+    "test:browser": "playwright test",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.0",
+    "hono": "^4.10.0",
+    "ky": "^1.13.0",
+    "pino": "^10.0.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.0",
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  }
+}
