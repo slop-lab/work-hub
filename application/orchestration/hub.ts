@@ -1,7 +1,7 @@
 import type { AgentRuntimeConnector, ExecutionConnector } from "../contracts/index.ts";
 import type { Actor } from "../domain/authorization.ts";
 import { parseHubCommand } from "../domain/commands.ts";
-import { forbidden } from "../domain/errors.ts";
+import { unsupported } from "../domain/errors.ts";
 import type { HubCommandReceipt, HubSnapshot } from "../domain/model.ts";
 import { AttemptFactory } from "../persistence/attempt-factory.ts";
 import type { Clock } from "../persistence/codec.ts";
@@ -10,6 +10,7 @@ import { EnvironmentRepository } from "../persistence/environment-repository.ts"
 import { ExecutionRepository } from "../persistence/execution-repository.ts";
 import { InteractionRepository } from "../persistence/interaction-repository.ts";
 import { OperationRepository } from "../persistence/operation-repository.ts";
+import { ObservationRepository } from "../persistence/observation-repository.ts";
 import { QueryRepository } from "../persistence/query-repository.ts";
 import { ResultRepository } from "../persistence/result-repository.ts";
 import { StateRepository } from "../persistence/state-repository.ts";
@@ -28,10 +29,11 @@ import type { RuntimeProfile, SimulatorCallLog, SimulatorControls, Simulators } 
 import { ConnectorRegistry, type ConnectorSet } from "./connectors.ts";
 import { DelegationWorker } from "./delegation-worker.ts";
 import { ExecutionWorker } from "./execution-worker.ts";
-import { QueryService, type TaskListQuery } from "./query-service.ts";
+import { QueryService, type ContextQuery, type TaskListQuery } from "./query-service.ts";
 import { ReconcileWorker } from "./reconcile-worker.ts";
 import { RuntimeWorker } from "./runtime-worker.ts";
 import { OrchestrationWorker } from "./worker.ts";
+import { BridgeQueries, type RuntimeScope } from './bridge-queries.ts';
 
 export type { Actor } from "../domain/authorization.ts";
 export type { HubCommand } from "../domain/commands.ts";
@@ -63,7 +65,7 @@ export class Hub {
   private readonly commands: CommandService;
   private readonly queries: QueryService;
   private readonly worker: OrchestrationWorker;
-  private readonly interactions: InteractionRepository;
+  private readonly bridge: BridgeQueries;
   private readonly simulators: Simulators | undefined;
   private readonly references: ReferenceRepository;
   private readonly eventLog: EventRepository;
@@ -78,6 +80,7 @@ export class Hub {
     const environments = new EnvironmentRepository(this.store.database, this.store.clock);
     const results = new ResultRepository(this.store.database, this.store.clock);
     const operations = new OperationRepository(this.store.database, this.store.clock);
+    const observation = new ObservationRepository(this.store.database, this.store.clock);
     const state = new StateRepository(this.store.database, this.store.clock);
     const query = new QueryRepository(this.store.database);
     const attempts = new AttemptFactory(this.store.database, this.store.clock, execution);
@@ -86,16 +89,19 @@ export class Hub {
       ? createSimulators(path, options.runtimeProfile === undefined ? {} : { runtimeProfile: options.runtimeProfile })
       : undefined;
     const connectors = new ConnectorRegistry(this.connectorSet(options, this.simulators));
-    this.administration = new Administration(this.store, { runtimeSupports: (id, names) => connectors.runtimeSupports(id, names) });
+    this.administration = new Administration(this.store, { runtimeSupports: (id, names) => connectors.runtimeSupports(id, names), connectorAvailable: (kind, id) => connectors.available(kind, id) });
     const workHandler = new WorkHandler(work, execution, results, state);
     const interactionHandler = new InteractionHandler(interactions, operations, () => this.store.clock.now());
     const executionHandler = new ExecutionHandler({
       work, execution, attempts, environments, interactions, operations, state,
-      installationUsable: (workspaceId, kind, id) => this.administration.installations.list({
+      installationUsable: (workspaceId, kind, id) => {
+        if (!connectors.available(kind, id)) throw unsupported('connector_unavailable', `Connector installation ${id} is not configured or compatible.`);
+        return this.administration.installations.list({
         id: "system", workspaceId, role: "administrator",
         projectIds: [], profileIds: [], bindingIds: [],
       }).some((installation) => installation.kind === kind && installation.id === id &&
-        installation.available && installation.enabled),
+        installation.available && installation.enabled);
+      },
       runtimeSupports: (id, names) => connectors.runtimeSupports(id, names),
     });
     const continuationHandler = new ContinuationHandler({
@@ -104,13 +110,17 @@ export class Hub {
       attempts,
       operations,
       environments,
+      observation,
       results,
       state,
-      installationUsable: (workspaceId, id) => this.administration.installations.list({
+      installationUsable: (workspaceId, kind, id) => {
+        if (!connectors.available(kind, id)) return false;
+        return this.administration.installations.list({
         id: "system", workspaceId, role: "administrator",
         projectIds: [], profileIds: [], bindingIds: [],
-      }).some((installation) => installation.kind === "agent_runtime" &&
-        installation.id === id && installation.available && installation.enabled),
+      }).some((installation) => installation.kind === kind &&
+        installation.id === id && installation.available && installation.enabled);
+      },
       runtimeSupports: (id, names) => connectors.runtimeSupports(id, names),
       now: () => this.store.clock.now(),
     });
@@ -130,13 +140,41 @@ export class Hub {
     });
     const executionWorker = new ExecutionWorker({ connectors, operations, environments });
     const reconcileWorker = new ReconcileWorker({
-      connectors, state, execution, interactions, results,
+      connectors, state, observation, execution, interactions, results,
     });
     this.worker = new OrchestrationWorker({
       connectors, operations, delegation: delegationWorker, runtime: runtimeWorker,
       execution: executionWorker, reconciliation: reconcileWorker,
+      terminalFailure: (item, receipt) => {
+        switch (item.operationKind) {
+          case "delegation.advance":
+          case "execution.attachForDelegation":
+          case "session.attachEnvironment":
+          case "runtime.openForDelegation":
+            delegationWorker.applyFailure(item);
+            return;
+          case "runtime.startAttempt":
+          case "runtime.sendInstruction":
+          case "runtime.deliverResponse":
+          case "runtime.requestStop":
+          case "session.attachExisting":
+          case "runtime.requestControl":
+          case "runtime.detachSession":
+            runtimeWorker.applyFailure(item, receipt);
+            return;
+          case "execution.detachAttachment":
+          case "execution.releaseAllocation":
+          case "execution.cancelOperation":
+          case "execution.releaseCanceledAllocation":
+          case "execution.detachCanceledAttachment":
+            executionWorker.applyFailure(item);
+            return;
+          default:
+            throw new TypeError(`No terminal failure reducer for ${item.operationKind}.`);
+        }
+      },
     });
-    this.interactions = interactions;
+    this.bridge = new BridgeQueries(this.store.database, interactions);
     this.readiness = {
       coreReady: false,
       liveIntegrationReady: false,
@@ -164,13 +202,15 @@ export class Hub {
   listTasks(actor: Actor, query: TaskListQuery = {}) { return this.queries.listTasks(actor, query); }
   getRequest(actor: Actor, id: string) { return this.queries.getRequest(actor, id); }
   getSession(actor: Actor, id: string) { return this.queries.getSession(actor, id); }
-  getOutput(actor: Actor, id: string, query: { readonly after: number; readonly limit: number }) { return this.queries.getOutput(actor, id, query); }
+  getOutput(actor: Actor, id: string, query: { readonly attemptId?: string; readonly after: number; readonly limit: number }) { return this.queries.getOutput(actor, id, query); }
+  getOperation(actor: Actor, id: string) { return this.queries.getOperation(actor, id); }
   getEnvironmentRegistration(actor: Actor, id: string) {
     return this.queries.getEnvironmentRegistration(actor, id);
   }
   getEnvironmentBinding(actor: Actor, id: string) { return this.queries.getEnvironmentBinding(actor, id); }
   getCommandReceipt(actor: Actor, id: string) { return this.queries.getCommandReceipt(actor, id); }
   getDashboard(actor: Actor) { return this.queries.dashboard(actor); }
+  contextSnapshot(actor: Actor, input: ContextQuery) { return this.queries.context(actor, input); }
   events(actor: Actor, input: { readonly after: number; readonly limit?: number }) {
     const snapshot = this.snapshot(actor);
     const permittedIds = new Set([...snapshot.tasks, ...snapshot.requests, ...snapshot.sessions, ...snapshot.attempts, ...snapshot.environmentBindings, ...snapshot.environmentRegistrations, ...snapshot.results].map((record) => record.id));
@@ -178,17 +218,9 @@ export class Hub {
   }
   snapshot(actor: Actor): HubSnapshot { return this.queries.snapshot(actor); }
 
-  bridgeResponses(actor: Actor, input: { readonly after?: string } = {}) {
-    if (actor.role !== "runtime" || actor.sessionId === undefined) {
-      throw forbidden("Bridge response polling requires a scoped runtime principal.");
-    }
-    return this.interactions.bridgeResponses({
-      workspaceId: actor.workspaceId, sessionId: actor.sessionId,
-      ...(actor.attemptId === undefined ? {} : { attemptId: actor.attemptId }),
-      ...(actor.bindingGeneration === undefined ? {} : { bindingGeneration: actor.bindingGeneration }),
-      ...(input.after === undefined ? {} : { after: input.after }),
-    });
-  }
+  agentRequests(actor: Actor) { return this.bridge.requests(actor); }
+  assertBridgeScope(scope: RuntimeScope): void { this.bridge.assertScope(scope); }
+  bridgeResponses(actor: Actor, input: { readonly after?: string } = {}) { return this.bridge.responses(actor, input); }
 
   drain(input: { readonly limit?: number } = {}): Promise<number> { return this.worker.drain(input); }
   reconcile(input: { readonly limit?: number } = {}): Promise<number> { return this.worker.reconcile(input); }

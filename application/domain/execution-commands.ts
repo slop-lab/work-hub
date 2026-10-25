@@ -74,9 +74,11 @@ export const executionCommandSchemas = [
     "attempt.retry",
     z.strictObject({
       predecessorId: idSchema,
+      profileId: idSchema.optional(),
       input: z.union([z.literal("snapshot"), z.literal("current_task")]),
       recoveryDecisionId: idSchema.optional(),
       sameSession: z.boolean().default(false),
+      environment: environmentSelectionSchema.optional(),
     }),
   ),
   envelope(

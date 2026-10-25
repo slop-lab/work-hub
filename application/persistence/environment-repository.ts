@@ -10,6 +10,7 @@ import { EnvironmentAttachmentSchema, LifecycleGrantSchema } from "../contracts/
 import type { EnvironmentAttachment, ExistingEnvironmentRegistration, LifecycleGrant } from "../contracts/index.ts";
 import type { Clock } from "./codec.ts";
 import { newId, parseJson } from "./codec.ts";
+import { hasOtherActiveIdentityBinding } from './environment-identity-bindings.ts';
 
 const objectSchema = z.record(z.string(), z.unknown());
 const objectListSchema = z.array(objectSchema);
@@ -124,6 +125,10 @@ export class EnvironmentRepository {
     ).get(workspaceId, id));
   }
 
+  bindingsForSession(workspaceId: string, sessionId: string): readonly EnvironmentBindingView[] {
+    return this.database.prepare(`${bindingSelect} WHERE workspace_id = ? AND session_id = ? ORDER BY updated_at DESC LIMIT 20`).all(workspaceId, sessionId).map(bindingFromRow);
+  }
+
   connectorRegistration(workspaceId: string, id: string): ExistingEnvironmentRegistration {
     const row = z.strictObject({
       id: z.string(), revision: z.number(), label: z.string(),
@@ -234,11 +239,8 @@ export class EnvironmentRepository {
     nativeId: string,
     incarnation?: string,
   ): boolean {
-    return this.database.prepare(`SELECT 1 FROM environment_bindings WHERE workspace_id = ?
-      AND id <> ? AND state NOT IN ('detached','released','failed')
-      AND json_extract(identity_json, '$.native.id') = ?
-      AND COALESCE(json_extract(identity_json, '$.native.incarnation'), '') = ? LIMIT 1`)
-      .get(workspaceId, bindingId, nativeId, incarnation ?? "") !== undefined;
+    return hasOtherActiveIdentityBinding(this.database, { workspaceId, bindingId, nativeId,
+      ...(incarnation === undefined ? {} : { incarnation }) });
   }
 
   updateBindingState(workspaceId: string, id: string, state: EnvironmentBindingView["state"]): void {

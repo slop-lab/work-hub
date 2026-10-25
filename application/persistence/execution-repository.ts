@@ -38,7 +38,7 @@ const attemptRowSchema = z.strictObject({
     z.literal("fresh"), z.literal("stale"), z.literal("unreachable"), z.literal("unknown"),
   ]),
   inputSnapshotJson: z.string(), predecessorId: z.string().nullable(),
-  unresolved: z.number(), stopRequestedAt: z.string().nullable(),
+  unresolved: z.number(), stopRequestedAt: z.string().nullable(), observationEndedAt: z.string().nullable(),
   createdAt: z.string(), updatedAt: z.string(),
 });
 const profileRowSchema = z.strictObject({
@@ -76,6 +76,7 @@ function toAttempt(row: unknown): AttemptView {
     ...(value.predecessorId === null ? {} : { predecessorId: value.predecessorId }),
     unresolved: value.unresolved === 1,
     ...(value.stopRequestedAt === null ? {} : { stopRequestedAt: value.stopRequestedAt }),
+    ...(value.observationEndedAt === null ? {} : { observationEndedAt: value.observationEndedAt }),
     createdAt: value.createdAt, updatedAt: value.updatedAt,
   };
 }
@@ -89,7 +90,8 @@ const attemptSelect = `SELECT id, workspace_id AS workspaceId, task_id AS taskId
   session_id AS sessionId, profile_id AS profileId, profile_revision AS profileRevision,
   role, origin, phase, outcome, observation, input_snapshot_json AS inputSnapshotJson,
   predecessor_id AS predecessorId,
-  unresolved, stop_requested_at AS stopRequestedAt, created_at AS createdAt,
+  unresolved, stop_requested_at AS stopRequestedAt, observation_ended_at AS observationEndedAt,
+  created_at AS createdAt,
   updated_at AS updatedAt FROM attempts`;
 
 export class ExecutionRepository {
@@ -191,10 +193,27 @@ export class ExecutionRepository {
     return this.database.prepare(`${sessionSelect} WHERE workspace_id = ? ORDER BY updated_at DESC`)
       .all(workspaceId).map(toSession);
   }
+  latestSession(workspaceId: string): SessionView | undefined { const row = this.database.prepare(`${sessionSelect} WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 1`).get(workspaceId); return row === undefined ? undefined : toSession(row); }
+
+  sessionsForTask(workspaceId: string, taskId: string): readonly SessionView[] {
+    return this.database.prepare(`${sessionSelect} WHERE workspace_id = ? AND task_id = ? ORDER BY updated_at DESC LIMIT 100`).all(workspaceId, taskId).map(toSession);
+  }
 
   getAttempt(workspaceId: string, id: string): AttemptView {
     return toAttempt(this.database.prepare(`${attemptSelect} WHERE workspace_id = ? AND id = ?`)
       .get(workspaceId, id));
+  }
+
+  attemptsForTask(workspaceId: string, taskId: string): readonly AttemptView[] {
+    return this.database.prepare(`${attemptSelect} WHERE workspace_id = ? AND task_id = ? ORDER BY updated_at DESC LIMIT 100`).all(workspaceId, taskId).map(toAttempt);
+  }
+
+  attemptsForSession(workspaceId: string, sessionId: string): readonly AttemptView[] {
+    return this.database.prepare(`${attemptSelect} WHERE workspace_id = ? AND session_id = ? ORDER BY updated_at DESC LIMIT 100`).all(workspaceId, sessionId).map(toAttempt);
+  }
+
+  activeAttempts(workspaceId: string, limit: number): readonly AttemptView[] {
+    return this.database.prepare(`${attemptSelect} WHERE workspace_id = ? AND unresolved = 1 ORDER BY updated_at DESC LIMIT ?`).all(workspaceId, limit).map(toAttempt);
   }
 
   listAttempts(workspaceId: string): readonly AttemptView[] {

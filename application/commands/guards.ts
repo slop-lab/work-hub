@@ -18,6 +18,15 @@ export function authorizeTask(actor: Actor, task: TaskView): void {
 
 export function authorizeRequest(actor: Actor, request: RequestView): void {
   requireProject(actor, request.projectId);
+  if (request.recipient['kind'] === 'agent_session') {
+    if (actor.role !== 'runtime' || request.recipient['sessionId'] !== actor.sessionId ||
+      request.sessionId !== actor.sessionId || request.attemptId !== actor.attemptId ||
+      request.bindingGeneration !== actor.bindingGeneration) {
+      throw forbidden('Only the scoped recipient runtime can answer this request.');
+    }
+  } else if (actor.role === 'runtime') {
+    throw forbidden('Runtime principals can answer only requests addressed to their session.');
+  }
   if (request.recipient["kind"] === "user" && request.recipient["userId"] !== actor.id) {
     throw forbidden("Only the named recipient can answer this request.");
   }

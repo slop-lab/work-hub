@@ -99,6 +99,7 @@ export type AttemptView = {
   readonly predecessorId?: string;
   readonly unresolved: boolean;
   readonly stopRequestedAt?: string;
+  readonly observationEndedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 };

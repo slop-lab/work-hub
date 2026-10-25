@@ -60,6 +60,10 @@ export class SessionExecutionHandler {
     if (session.activeAttemptId !== command.payload.attemptId) {
       throw conflict("attempt_target_conflict", "Instruction target is not the current attempt.");
     }
+    const attempt = this.execution.getAttempt(actor.workspaceId, command.payload.attemptId);
+    if (!attempt.unresolved || attempt.phase === "finished") {
+      throw conflict("attempt_target_conflict", "Instruction target has already ended.");
+    }
     const modes = session.capabilities["activeInputModes"];
     if (!Array.isArray(modes) || !modes.includes(command.payload.mode)) {
       throw unsupported("instruction_timing_unsupported", "The requested instruction timing is unsupported.");
@@ -115,14 +119,31 @@ export class SessionExecutionHandler {
     const session = this.execution.getSession(actor.workspaceId, sessionId);
     requireProject(actor, session.projectId);
     requireRevision(session.revision, command.expected?.session, "Session");
+    let observedAttemptId: string | undefined;
     if (session.activeAttemptId !== undefined) {
       const attempt = this.execution.getAttempt(actor.workspaceId, session.activeAttemptId);
       if (attempt.unresolved && attempt.role === "primary") {
         throw conflict("controlled_work_unresolved", "Controlled work must be stopped or reconciled before closing.");
       }
+      if (attempt.unresolved && attempt.role === "observed") {
+        if (command.payload.externalWorkDecision !== "continues") {
+          throw conflict("external_work_decision_required",
+            "Confirm that externally controlled work may continue before closing observation.");
+        }
+        observedAttemptId = attempt.id;
+      }
     }
-    this.state.closeSession(actor.workspaceId, sessionId);
-    return this.confirmed("session.closed", "session", sessionId, session.revision + 1);
+    const binding = this.state.runtimeBindingRecord(actor.workspaceId, sessionId);
+    const payload = { sessionId,
+      ...(observedAttemptId === undefined ? {} : { observedAttemptId }) };
+    const operationId = this.operations.addOutbox({
+      workspaceId: actor.workspaceId, commandId: command.commandId,
+      workType: "runtime.detachSession", connectorKind: "runtime",
+      installationId: session.runtimeInstallationId, stage: "detach_session",
+      targetId: sessionId, targetGeneration: binding.generation,
+      payload, inputDigest: digest(payload),
+    });
+    return this.accepted("session.close_requested", "session", sessionId, operationId);
   }
 
   private requireRuntimeAction(

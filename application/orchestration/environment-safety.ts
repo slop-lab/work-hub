@@ -10,7 +10,7 @@ export function attachmentHonorsSelection(input: {
   readonly attachment: EnvironmentAttachment;
   readonly expectedIdentity: ResourceIdentity;
   readonly requestedAccess: "read" | "write";
-  readonly workAreas: readonly { readonly key: string; readonly path: string; readonly pathNamespace: string }[];
+  readonly workAreas: readonly { readonly key: string; readonly path: string; readonly pathNamespace: string; readonly requestedAccess?: 'read' | 'write'; readonly preparation?: 'preserve_existing' | 'provider_profile' }[];
   readonly now: string;
 }): boolean {
   if (!sameResourceIdentity(input.expectedIdentity, input.attachment.identity) ||
@@ -18,7 +18,11 @@ export function attachmentHonorsSelection(input: {
       input.attachment.useGrant.expiresAt <= input.now)) return false;
   if (input.requestedAccess === "write" &&
     (input.attachment.useGrant.enforcement !== "enforced" ||
-      input.attachment.useGrant.exclusivity === "none")) return false;
+       input.attachment.useGrant.exclusivity === "none")) return false;
+  if (input.attachment.useGrant.allowedWorkAreas.length !== input.workAreas.length ||
+    input.attachment.useGrant.allowedWorkAreas.some((granted) => !input.workAreas.some((selected) =>
+      sameArea(granted, selected) && granted.requestedAccess === (selected.requestedAccess ?? input.requestedAccess) &&
+      (selected.preparation === undefined || granted.preparation === selected.preparation)))) return false;
   return input.workAreas.every((selected) => {
     const granted = input.attachment.useGrant.allowedWorkAreas.find((area) => sameArea(area, selected));
     return granted !== undefined &&

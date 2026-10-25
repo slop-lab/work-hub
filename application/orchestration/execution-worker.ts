@@ -31,8 +31,17 @@ export class ExecutionWorker {
       this.operations.markOutbox(item.id, "done", { status: "rejected", code: "revision_conflict" });
       return;
     }
-    const observation = await this.connectors.execution(item.installationId)
-      .probeExisting(callContext(item), registration);
+    let observation;
+    try {
+      observation = await this.connectors.execution(item.installationId)
+        .probeExisting(callContext(item), registration);
+    } catch (error) {
+      if (error instanceof Error) {
+        this.operations.markOutbox(item.id, "pending");
+        return;
+      }
+      throw error;
+    }
     this.environments.saveProbe(item.workspaceId, registration.id, observation.value);
     this.operations.markOutbox(item.id, "done", { status: "confirmed", observation });
   }
@@ -53,7 +62,7 @@ export class ExecutionWorker {
     );
     this.settle(item, receipt, () => {
       this.environments.updateBindingState(item.workspaceId, bindingId, "detached");
-    });
+    }, () => this.environments.updateBindingState(item.workspaceId, bindingId, "failed"));
   }
 
   async release(item: OutboxItem): Promise<void> {
@@ -104,7 +113,7 @@ export class ExecutionWorker {
       .releaseAllocation(actionContext(item, [details.lifecycleGrant.id]), input);
     this.settle(item, receipt, () => {
       this.environments.updateBindingState(item.workspaceId, payload.bindingId, "released");
-    });
+    }, () => this.environments.updateBindingState(item.workspaceId, payload.bindingId, "failed"));
   }
 
   async cancel(item: OutboxItem): Promise<void> {
@@ -114,7 +123,7 @@ export class ExecutionWorker {
       actionContext(item),
       payload.operationIdToCancel,
     );
-    this.settle(item, receipt, () => {});
+    this.settle(item, receipt, () => {}, () => {});
   }
 
   async releaseCanceled(item: OutboxItem): Promise<void> {
@@ -135,7 +144,7 @@ export class ExecutionWorker {
       .releaseAllocation(actionContext(item, [payload.lifecycleGrant.id]), input);
     this.settle(item, receipt, () => {
       this.environments.updateBindingState(item.workspaceId, payload.bindingId, "released");
-    });
+    }, () => this.environments.updateBindingState(item.workspaceId, payload.bindingId, "failed"));
   }
 
   async detachCanceled(item: OutboxItem): Promise<void> {
@@ -147,11 +156,12 @@ export class ExecutionWorker {
     );
     this.settle(item, receipt, () => {
       this.environments.updateBindingState(item.workspaceId, payload.bindingId, "detached");
-    });
+    }, () => this.environments.updateBindingState(item.workspaceId, payload.bindingId, "failed"));
   }
 
   applyLookup(item: OutboxItem): void {
     switch (item.operationKind) {
+      case "execution.cancelOperation": return;
       case "execution.detachAttachment": {
         const bindingId = z.strictObject({ bindingId: z.string() }).parse(item.payload).bindingId;
         this.environments.updateBindingState(item.workspaceId, bindingId, "detached");
@@ -162,12 +172,44 @@ export class ExecutionWorker {
         this.environments.updateBindingState(item.workspaceId, bindingId, "released");
         return;
       }
+      case "execution.releaseCanceledAllocation": {
+        const bindingId = z.strictObject({ bindingId: z.string() }).passthrough().parse(item.payload).bindingId;
+        this.environments.updateBindingState(item.workspaceId, bindingId, "released");
+        return;
+      }
+      case "execution.detachCanceledAttachment": {
+        const bindingId = z.strictObject({ bindingId: z.string() }).passthrough().parse(item.payload).bindingId;
+        this.environments.updateBindingState(item.workspaceId, bindingId, "detached");
+        return;
+      }
       default:
         throw new TypeError(`Unsupported execution lookup stage ${item.operationKind}.`);
     }
   }
 
-  private settle<T>(item: OutboxItem, receipt: OperationReceipt<T>, confirmed: () => void): void {
+  applyFailure(item: OutboxItem): void {
+    switch (item.operationKind) {
+      case "execution.detachAttachment":
+      case "execution.releaseAllocation":
+      case "execution.releaseCanceledAllocation":
+      case "execution.detachCanceledAttachment": {
+        const bindingId = z.strictObject({ bindingId: z.string() }).passthrough()
+          .parse(item.payload).bindingId;
+        this.environments.updateBindingState(item.workspaceId, bindingId, "failed");
+        return;
+      }
+      case "execution.cancelOperation": return;
+      default:
+        throw new TypeError(`Unsupported execution failure stage ${item.operationKind}.`);
+    }
+  }
+
+  private settle<T>(
+    item: OutboxItem,
+    receipt: OperationReceipt<T>,
+    confirmed: () => void,
+    failed: () => void,
+  ): void {
     switch (receipt.status) {
       case "confirmed":
         this.operations.settleConfirmed(item.id, receipt, confirmed);
@@ -179,7 +221,7 @@ export class ExecutionWorker {
         return;
       case "rejected":
       case "failed":
-        this.operations.markOutbox(item.id, "done", receipt);
+        this.operations.settleTerminal(item.id, receipt.status, receipt, failed);
         return;
     }
   }

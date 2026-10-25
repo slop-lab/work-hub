@@ -44,6 +44,8 @@ export class SessionAttachmentHandler {
     });
     let bindingId: string | undefined;
     let installationId = profile.runtimeInstallationId;
+    let expectedIdentity: z.infer<typeof ResourceIdentitySchema> | undefined;
+    let selectedUseGrantId: string | undefined;
     if (environment.mode === "existing") {
       const registration = this.input.environments.getRegistration(actor.workspaceId, environment.registrationId);
       this.input.requireInstallation(actor.workspaceId, "execution", registration.executionInstallationId);
@@ -52,12 +54,20 @@ export class SessionAttachmentHandler {
       if (!registration.allowedProjectIds.includes(task.projectId) || registration.retiredAt !== undefined) {
         throw forbidden("The existing environment is not available to this project.");
       }
+      const connectorRegistration = this.input.environments.connectorRegistration(
+        actor.workspaceId, registration.id,
+      );
+      const probeInput = this.input.environments.verification(actor.workspaceId, registration.id);
       requireExistingSelection({
-        registration: this.input.environments.connectorRegistration(actor.workspaceId, registration.id),
-        probeInput: this.input.environments.verification(actor.workspaceId, registration.id),
+        registration: connectorRegistration,
+        probeInput,
         selected: environment.workAreas, requestedAccess: environment.requestedAccess,
         now: new Date().toISOString(),
       });
+      expectedIdentity = ResourceIdentitySchema.parse(connectorRegistration.verifiedIdentity);
+      selectedUseGrantId = z.strictObject({ availableUseGrant: z.strictObject({
+        id: z.string(),
+      }).passthrough() }).passthrough().parse(probeInput).availableUseGrant.id;
       installationId = registration.executionInstallationId;
       bindingId = this.input.environments.createBinding({
         workspaceId: actor.workspaceId, sessionId: session.id,
@@ -71,6 +81,8 @@ export class SessionAttachmentHandler {
       controlMode: command.payload.controlMode, environment,
       profileId: profile.id, profileRevision: profile.revision, taskId: task.id,
       ...(bindingId === undefined ? {} : { bindingId }),
+      ...(expectedIdentity === undefined ? {} : { expectedIdentity }),
+      ...(selectedUseGrantId === undefined ? {} : { selectedUseGrantId }),
     };
     const workType = environment.mode === "existing" ? "session.attachEnvironment" : "session.attachExisting";
     const operationId = this.input.operations.addOutbox({
@@ -84,3 +96,6 @@ export class SessionAttachmentHandler {
       objectRefs: [{ kind: "session", id: session.id }], operationIds: [operationId] };
   }
 }
+import { z } from "zod";
+
+import { ResourceIdentitySchema } from "../contracts/index.ts";

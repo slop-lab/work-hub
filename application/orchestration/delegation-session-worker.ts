@@ -43,6 +43,7 @@ export class DelegationSessionWorker {
       this.input.operations.settleTerminal(item.id, receipt.status, receipt, () => {
         this.enqueueAttachmentCleanup(item, payload.delegation, payload.attachment);
         this.input.state.finishAttempt(item.workspaceId, payload.delegation.attemptId, "failed");
+        this.input.state.closeSession(item.workspaceId, payload.delegation.sessionId);
       });
       return;
     }
@@ -75,6 +76,14 @@ export class DelegationSessionWorker {
       attachment: EnvironmentAttachmentSchema,
       route: z.record(z.string(), z.unknown()) }).parse(item.payload);
     this.bindAndStart(item, payload.delegation, result);
+  }
+
+  applyFailure(item: OutboxItem): void {
+    const payload = z.strictObject({ delegation: delegationSchema,
+      attachment: EnvironmentAttachmentSchema }).passthrough().parse(item.payload);
+    this.enqueueAttachmentCleanup(item, payload.delegation, payload.attachment);
+    this.input.state.finishAttempt(item.workspaceId, payload.delegation.attemptId, "failed");
+    this.input.state.closeSession(item.workspaceId, payload.delegation.sessionId);
   }
 
   private enqueueAttachmentCleanup(

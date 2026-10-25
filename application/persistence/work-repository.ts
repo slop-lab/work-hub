@@ -121,6 +121,29 @@ export class WorkRepository {
       .map(toTask);
   }
 
+  listTasksPage(input: { readonly workspaceId: string; readonly allowedProjectIds?: readonly string[]; readonly runtimeTaskId?: string; readonly projectId?: string; readonly status?: TaskStatus; readonly ownerId?: string; readonly priority?: number; readonly search?: string; readonly includeArchived: boolean; readonly after?: { readonly priority: number; readonly updatedAt: string; readonly id: string }; readonly limit: number }): readonly TaskView[] {
+    const clauses = ['workspace_id = ?'];
+    const parameters: (string | number)[] = [input.workspaceId];
+    if (input.allowedProjectIds !== undefined) {
+      if (input.allowedProjectIds.length === 0) return [];
+      clauses.push(`project_id IN (${input.allowedProjectIds.map(() => '?').join(',')})`);
+      parameters.push(...input.allowedProjectIds);
+    }
+    if (input.runtimeTaskId !== undefined) { clauses.push('id = ?'); parameters.push(input.runtimeTaskId); }
+    if (!input.includeArchived) clauses.push('archived_at IS NULL');
+    if (input.projectId !== undefined) { clauses.push('project_id = ?'); parameters.push(input.projectId); }
+    if (input.status !== undefined) { clauses.push('status = ?'); parameters.push(input.status); }
+    if (input.ownerId !== undefined) { clauses.push('owner_id = ?'); parameters.push(input.ownerId); }
+    if (input.priority !== undefined) { clauses.push('COALESCE(priority, 50) = ?'); parameters.push(input.priority); }
+    if (input.search !== undefined) { clauses.push("LOWER(title || '\n' || description || '\n' || COALESCE(expected_outcome,'')) LIKE ?"); parameters.push(`%${input.search.toLocaleLowerCase()}%`); }
+    if (input.after !== undefined) {
+      clauses.push('(COALESCE(priority,50) > ? OR (COALESCE(priority,50) = ? AND updated_at < ?) OR (COALESCE(priority,50) = ? AND updated_at = ? AND id > ?))');
+      parameters.push(input.after.priority, input.after.priority, input.after.updatedAt, input.after.priority, input.after.updatedAt, input.after.id);
+    }
+    parameters.push(input.limit + 1);
+    return this.database.prepare(`${taskSelect} WHERE ${clauses.join(' AND ')} ORDER BY COALESCE(priority,50), updated_at DESC, id LIMIT ?`).all(...parameters).map(toTask);
+  }
+
   updateTask(workspaceId: string, id: string, changes: TaskChanges): TaskView {
     const current = this.getTask(workspaceId, id);
     const now = this.clock.now().toISOString();

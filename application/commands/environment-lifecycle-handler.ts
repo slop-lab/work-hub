@@ -106,6 +106,9 @@ export class EnvironmentLifecycleHandler {
     const operationId = commandTargetId(command, "operation");
     const original = this.operations.operation(actor.workspaceId, operationId);
     if (original === undefined) throw conflict("operation_not_found", "The operation is not available in this workspace.");
+    if (original.status !== "unknown") {
+      throw conflict("operation_not_unknown", "Only an unknown operation can be reconciled explicitly.");
+    }
     const payload = { operationId };
     const queued = this.operations.addOutbox({
       workspaceId: actor.workspaceId, commandId: command.commandId,

@@ -162,7 +162,8 @@ test("AT-31 lost allocation response is reconciled by the original operation ID 
 });
 
 test("AT-32 cancellation during provisioning fences late readiness and tracks cleanup separately", async () => {
-  const context = fixture();
+  let now = new Date("2026-10-25T00:00:00.000Z");
+  const context = fixture({ clock: { now: () => now } });
   try {
     const simulator = context.hub.simulator;
     assert.ok(simulator);
@@ -179,6 +180,7 @@ test("AT-32 cancellation during provisioning fences late readiness and tracks cl
     await context.hub.execute(member, { commandId: "cancel-32", type: "attempt.stop", target: { kind: "attempt", id: attemptId }, expected: { bindingGeneration: 1 }, payload: { mode: "stop_work" } });
     await context.hub.drain();
     simulator.controls.completeAllocation(allocationCall.operationId);
+    now = new Date(now.getTime() + 1_000);
     for (let iteration = 0; iteration < 3; iteration += 1) await context.hub.drain();
 
     const calls = simulator.calls.list();
