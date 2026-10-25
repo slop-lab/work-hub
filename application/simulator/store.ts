@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { JsonObjectSchema, JsonValueSchema, SerializedOperationReceiptSchema, validateSerializedOperationReceipt, type JsonObject, type JsonValue, type OperationLookup, type SerializedOperationReceipt } from "../contracts/index.ts";
+import { ActionContextSchema, AllocationDescriptorSchema, AllocationRequestSchema, JsonObjectSchema, JsonValueSchema, NativeRefSchema, ResourceIdentitySchema, SerializedOperationReceiptSchema, validateSerializedOperationReceipt, type ActionContext, type AllocationDescriptor, type AllocationRequest, type JsonObject, type JsonValue, type NativeRef, type OperationLookup, type ResourceIdentity, type SerializedOperationReceipt } from "../contracts/index.ts";
 import { typedReceipt } from "./operation.ts";
 import type { RuntimeProfile, ScriptedOutcome, SimulatedEnvironment, SimulatorCall } from "./types.ts";
 
@@ -12,6 +12,8 @@ const OutputRowSchema = z.strictObject({ sequence: z.number(), item: z.string() 
 const EventRowSchema = z.strictObject({ sequence: z.number(), event: z.string() });
 const StreamRowSchema = z.strictObject({ sequence: z.number(), kind: z.enum(["output", "event"]), item: z.string() });
 const MaxSequenceRowSchema = z.strictObject({ sequence: z.number() });
+const AttachmentStateSchema = z.strictObject({ attachmentRef: NativeRefSchema, identity: ResourceIdentitySchema, detached: z.boolean() });
+const PendingAllocationSchema = z.strictObject({ context: ActionContextSchema, request: AllocationRequestSchema });
 
 export class SimulatorStore {
   readonly #db: DatabaseSync;
@@ -23,8 +25,9 @@ export class SimulatorStore {
   now(): string {
     const current = z.coerce.number().int().parse(this.getState("clock") ?? "0") + 1;
     this.setState("clock", String(current));
-    return new Date(Date.UTC(2026, 9, 22, 0, 0, current)).toISOString();
+    return this.timestamp(current);
   }
+  isExpired(timestamp: string): boolean { return Date.parse(timestamp) <= Date.parse(this.timestamp(z.coerce.number().int().parse(this.getState("clock") ?? "0"))); }
   getOperation(operationId: string): { readonly digest: string; readonly receipt: SerializedOperationReceipt; readonly visibleReceipt?: SerializedOperationReceipt } | undefined {
     const raw = this.#db.prepare("SELECT digest, receipt, visible_receipt FROM operations WHERE operation_id = ?").get(operationId);
     if (raw === undefined) return undefined;
@@ -64,10 +67,40 @@ export class SimulatorStore {
     const raw = this.#db.prepare("SELECT value FROM state WHERE key=?").get(key);
     return raw === undefined ? undefined : StateRowSchema.parse(raw).value;
   }
-  setEnvironment(id: string, value: SimulatedEnvironment): void { this.setState(`environment:${id}`, JSON.stringify(value)); }
+  bindEnvironmentAlias(registrationId: string, providerId: string): void {
+    const aliasKey = `environment-alias:${registrationId}`;
+    if (this.getState(aliasKey) === providerId) return;
+    const pendingState = this.getState(aliasKey) === undefined ? this.getState(`environment:${registrationId}`) : undefined;
+    this.setState(aliasKey, providerId);
+    if (pendingState === undefined) return;
+    this.setState(`environment:${providerId}`, pendingState);
+    this.#db.prepare("DELETE FROM state WHERE key=?").run(`environment:${registrationId}`);
+  }
+  setEnvironment(id: string, value: SimulatedEnvironment): void { this.setState(`environment:${this.getState(`environment-alias:${id}`) ?? id}`, JSON.stringify(value)); }
   getEnvironment(id: string): SimulatedEnvironment {
-    const raw = this.getState(`environment:${id}`);
+    const raw = this.getState(`environment:${this.getState(`environment-alias:${id}`) ?? id}`);
     return raw === undefined ? { state: "running", assurance: "immutable", externalActivity: "idle", incarnation: "v1" } : z.strictObject({ state: z.enum(["running", "stopped", "missing", "unknown"]), assurance: z.enum(["immutable", "attested", "weak"]), externalActivity: z.enum(["idle", "active", "unknown"]), incarnation: z.string() }).parse(JSON.parse(raw));
+  }
+  putAllocation(allocation: AllocationDescriptor): void { this.setState(`allocation:${allocation.allocationRef.id}`, JSON.stringify(allocation)); }
+  getAllocation(allocationId: string): AllocationDescriptor | undefined {
+    const raw = this.getState(`allocation:${allocationId}`);
+    return raw === undefined ? undefined : AllocationDescriptorSchema.parse(JSON.parse(raw));
+  }
+  putPendingAllocation(operationId: string, context: ActionContext, request: AllocationRequest): void {
+    this.setState(`pending-allocation:${operationId}`, JSON.stringify(PendingAllocationSchema.parse({ context, request })));
+  }
+  getPendingAllocation(operationId: string): { readonly context: ActionContext; readonly request: AllocationRequest } | undefined {
+    const raw = this.getState(`pending-allocation:${operationId}`);
+    return raw === undefined ? undefined : PendingAllocationSchema.parse(JSON.parse(raw));
+  }
+  putAttachment(attachmentRef: NativeRef, identity: ResourceIdentity): void { this.setState(`attachment:${attachmentRef.id}`, JSON.stringify({ attachmentRef, identity, detached: false })); }
+  getAttachment(attachmentId: string): z.infer<typeof AttachmentStateSchema> | undefined {
+    const raw = this.getState(`attachment:${attachmentId}`);
+    return raw === undefined ? undefined : AttachmentStateSchema.parse(JSON.parse(raw));
+  }
+  detachAttachment(attachmentId: string): void {
+    const attachment = this.getAttachment(attachmentId);
+    if (attachment !== undefined) this.setState(`attachment:${attachmentId}`, JSON.stringify({ ...attachment, detached: true }));
   }
   setRuntimeProfile(profile: RuntimeProfile): void { this.setState("runtime_profile", profile); }
   getRuntimeProfile(): RuntimeProfile { return z.enum(["structured", "limited_bridge"]).parse(this.getState("runtime_profile") ?? "structured"); }
@@ -103,4 +136,5 @@ export class SimulatorStore {
     this.#db.prepare("INSERT INTO runtime_stream(session_id,sequence,kind,item) VALUES(?,?,?,?)").run(sessionId, row.sequence, kind, JSON.stringify(item));
     return row.sequence;
   }
+  private timestamp(second: number): string { return new Date(Date.UTC(2026, 9, 22, 0, 0, second)).toISOString(); }
 }

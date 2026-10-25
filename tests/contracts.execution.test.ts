@@ -57,10 +57,11 @@ test("accepted waiting, definite failure and partial release are distinct receip
   sims.controls.scriptNext("execution.requestAllocation", { kind: "definite_failure", code: "capacity_unavailable" });
   const failed = await sims.execution.requestAllocation(action("failed"), allocation);
   assert.equal(failed.status, "failed");
-  const allocationRef = { installationId: "sim-execution", providerScope: "simulated", kind: "allocation", id: "allocated", incarnation: "v1" };
-  const identity = { native: allocationRef, assurance: "immutable" as const, continuityToken: "sim:allocated:v1" };
+  const allocated = await sims.execution.requestAllocation(action("partial-allocation"), { ...allocation, attemptId: "partial-release", releasePolicyRef: "delete" });
+  assert.equal(allocated.status, "confirmed");
+  if (allocated.status !== "confirmed") return;
   sims.controls.scriptNext("execution.releaseAllocation", { kind: "partial_release" });
-  const partial = await sims.execution.releaseAllocation(action("release"), { allocationRef, expectedIdentity: identity, lifecycleGrant: { id: "lifecycle", allocationRef, releasePolicyRef: "delete", allowedActions: ["release_allocation"] }, releasePolicyRef: "delete", controlledWorkTermination: { status: "no_controlled_work" }, preservationDecisionRef: "decision" });
+  const partial = await sims.execution.releaseAllocation(action("release"), { allocationRef: allocated.result.allocationRef, expectedIdentity: allocated.result.identity, lifecycleGrant: allocated.result.lifecycleGrant, releasePolicyRef: allocated.result.lifecycleGrant.releasePolicyRef, controlledWorkTermination: { status: "no_controlled_work" }, preservationDecisionRef: "decision" });
   assert.equal(partial.status, "failed");
   assert.equal(partial.partialEffects[0]?.disposition, "cleanup_pending");
 });
@@ -69,9 +70,11 @@ test("release exposes retained, stopped and deleted provider outcomes exactly", 
   const sims = createSimulators(join("/tmp", `workhub-release-results-${process.pid}-${Date.now()}.sqlite`));
   t.after(() => sims.close());
   for (const disposition of ["retained", "stopped", "deleted"] as const) {
-    const allocationRef = { installationId: "sim-execution", providerScope: "simulated", kind: "allocation", id: `allocation-${disposition}`, incarnation: "v1" };
-    sims.controls.setReleaseResult(allocationRef.id, { disposition, referenceAvailability: disposition === "retained" ? "preserved" : "may_expire" });
-    const receipt = await sims.execution.releaseAllocation(action(`release-${disposition}`), { allocationRef, expectedIdentity: { native: allocationRef, assurance: "immutable" }, lifecycleGrant: { id: `grant-${disposition}`, allocationRef, releasePolicyRef: disposition, allowedActions: ["release_allocation"] }, releasePolicyRef: disposition, controlledWorkTermination: { status: "no_controlled_work" }, preservationDecisionRef: "decision" });
+    const allocated = await sims.execution.requestAllocation(action(`allocate-${disposition}`), { ...allocation, attemptId: `release-${disposition}`, releasePolicyRef: disposition });
+    assert.equal(allocated.status, "confirmed");
+    if (allocated.status !== "confirmed") return;
+    sims.controls.setReleaseResult(allocated.result.allocationRef.id, { disposition, referenceAvailability: disposition === "retained" ? "preserved" : "may_expire" });
+    const receipt = await sims.execution.releaseAllocation(action(`release-${disposition}`), { allocationRef: allocated.result.allocationRef, expectedIdentity: allocated.result.identity, lifecycleGrant: allocated.result.lifecycleGrant, releasePolicyRef: allocated.result.lifecycleGrant.releasePolicyRef, controlledWorkTermination: { status: "no_controlled_work" }, preservationDecisionRef: "decision" });
     assert.equal(receipt.status, "confirmed");
     if (receipt.status === "confirmed") assert.equal(receipt.result.disposition, disposition);
   }
