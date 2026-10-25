@@ -8,6 +8,10 @@ control-plane, model-provider or external agent-runtime compatibility is claimed
 
 ## Executed checks
 
+The first two rows below record the initial `cc1bf7b` checkpoint. Independent
+review subsequently rejected readiness despite those green checks. Closure
+progress and review verdicts are tracked in [review-fixes.md](review-fixes.md).
+
 | Check | Observed result |
 |---|---|
 | `npm run check` | Strict TypeScript, **158/158 Node tests**, and browser production build passed. |
@@ -78,3 +82,23 @@ The full envelope, browser performance scoring and live-provider latency were no
   this container. The verified operating path is native Node.
 
 Independent final review is recorded separately from these executable test results.
+
+## Final review-closure verification
+
+The final closure implementation passed `npm run check`: strict TypeScript,
+**219/219 Node tests**, and build. The expanded real-browser run passed
+**24/24** journeys after the deterministic comment-draft race and mobile CJK
+wrapping/clipping regressions were fixed. The browser suite also exercises project-level questions, scoped
+human-to-agent questions, explicit retry environments, actionable operation
+recovery, persistent output pagination, and inert hostile output with CSP.
+
+Live browser and HTTP usage confirmed explicit delegation and scoped bridge
+question discovery/answering without a new attempt. A privileged command through
+that runtime credential returned HTTP 403. Simulator execution remains distinct
+from live-provider compatibility.
+
+Independent re-reviews passed the prior goal, durability and missed-context
+blockers; both final visual passes passed. The scoped permission/export review
+passed after fixing complete bridge credential tuple enforcement. A broad security
+review did not complete because of a tool policy error, so no blanket security
+approval is inferred. See [review-fixes.md](review-fixes.md) for the closure ledger.

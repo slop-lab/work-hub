@@ -35,7 +35,7 @@ Run all scenarios with `npm run test:acceptance`.
 | AT-24 | `AT-02/24: another authenticated client reads a committed human answer after server restart, without external effects`; `one response is committed per request revision` | Pass: one canonical response; later answer conflicts. |
 | AT-25 | `AT-25 an expired approval is rejected at response commit without runtime delivery`; `an approval that expires after commitment is suppressed before native delivery, without changing the answer` | Pass at commit and before delivery, using an injected server Clock and action-bound approval metadata. |
 | AT-26 | `AT-26 a nonblocking question stays actionable without changing a running attempt to paused` | Pass. |
-| AT-27 | `AT-27 asking an agent without a selected session cannot implicitly start work` | Pass: prompts selection through rejection; no Session or connector call. |
+| AT-27 | `AT-27 asking an agent without a selected session cannot implicitly start work`; `tests/human-agent-request.test.ts`; scoped-agent browser journey | Pass: missing selection cannot start work; an explicitly targeted agent discovers and answers its exact scoped request without another attempt. |
 | AT-28 | `AT-28 unsupported mid-run timing is refused without connector invocation or silent queueing` | Pass with limited runtime profile. |
 | AT-29 | `AT-29 continuation after termination creates a distinct attempt and immutable snapshot in the same session` | Pass. |
 | AT-30 | `AT-30 a lost stop acknowledgment never creates a false terminal state` | Pass: stop intent recorded, outcome absent, Attempt unresolved. |
@@ -44,12 +44,12 @@ Run all scenarios with `npm run test:acceptance`.
 | AT-33 | `AT-22/33/40: scoped bridge question, human answer, explicit acknowledgment and nonterminal result` | Pass: Result saved while Attempt remains unresolved and task active. |
 | AT-34 | `AT-34 a late old result is retained without replacing a newer primary attempt or human intent` | Pass. |
 | AT-35 | `AT-35 task and profile edits cannot rewrite a running attempt's immutable snapshot` | Pass: byte-equivalent snapshot and pinned profile revision. |
-| AT-36 | `AT-36 retry handoff creates a new logical session and does not claim native-state migration` | Pass: a distinct Session/native identity is created. |
+| AT-36 | `AT-36 retry handoff creates a new logical session and does not claim native-state migration`; `tests/remaining-lifecycle.test.ts`; `tests/retry-environment.test.ts` | Pass: explicit target profile/runtime and valid environment create a distinct Session/native identity; disabled providers are refused before records or effects. |
 | AT-37 | `AT-37 restart after a side effect reconciles the same operation without blind replay` | Pass: persistent simulator ledger shows one native open call. |
 | AT-38 | `AT-38 replay after restart deduplicates canonical requests and exposes history gaps` | Pass: one canonical Request and explicit gap output. |
 | AT-39 | `AT-39 a disappeared native session preserves local history and is never recreated automatically` | Pass: history remains, no reopen occurs, and observation becomes unreachable. |
 | AT-40 | `AT-22/33/40: scoped bridge question, human answer, explicit acknowledgment and nonterminal result` | Pass: runtime self-answer receives HTTP 403. |
-| AT-41 | `AT-41 malicious runtime output remains inert data and cannot trigger privileged connector actions` | Pass: exact hostile text retained as data; no privileged calls. Browser CSP/rendering has separate browser coverage. |
+| AT-41 | `AT-41 malicious runtime output remains inert data and cannot trigger privileged connector actions`; `tests/browser-security.spec.ts` | Pass: exact hostile text remains visible inert text, no injected elements or privileged calls, and the browser response carries the self-only script CSP. |
 | AT-42 | `AT-42 output gaps and canonical questions/results survive managed environment release` | Pass. |
 | AT-43 | `AT-43 export excludes access handles and restart reconciles ambiguous work without constructor replay`; `AT-43 filesystem backup and restore preserve answers and authentication while reconciling the original ambiguous operation` | Pass: stopped SQLite files and the independent simulator ledger are copied to a new directory, authentication/answers survive, and the original operation is reconciled without another native open. No JSON import API is claimed. |
 | AT-44 | `AT-44 disabling a connector preserves historical session data and blocks new side effects` | Pass: installation state is checked before accepting new delegation while history remains readable. |
