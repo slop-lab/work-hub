@@ -99,7 +99,8 @@ function retryDialog(ctx: UiContext, task: HubTask, target: Extract<RetryTarget,
 		}
 		confirm.disabled = true;
 		dialog.setAttribute("aria-busy", "true");
-		void ctx.command({ commandId: commandId(), type: "attempt.retry", target: { kind: "attempt", id: target.attemptId }, expected: { task: task.revision, profile: target.profileRevision, ...(selection.registrationRevision === undefined ? {} : { registration: selection.registrationRevision }) }, payload: { predecessorId: target.attemptId, input: context.value === "snapshot" ? "snapshot" : "current_task", sameSession: false, environment: selection.environment } }, "New-session retry accepted with the selected environment.").then((saved) => {
+		void ctx.command({ commandId: commandId(), type: "attempt.retry", target: { kind: "attempt", id: target.attemptId },
+			expected: { task: task.revision, profile: target.profileRevision, ...(selection.registrationRevision === undefined ? {} : { registration: selection.registrationRevision }) }, payload: { predecessorId: target.attemptId, input: context.value === "snapshot" ? "snapshot" : "current_task", sameSession: false, environment: selection.environment } }, "New-session retry accepted with the selected environment.").then((saved) => {
 			if (saved) dialog.close();
 			else { confirm.disabled = false; dialog.removeAttribute("aria-busy"); }
 		});
