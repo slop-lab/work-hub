@@ -1,0 +1,94 @@
+import ky, { HTTPError, TimeoutError } from 'ky';
+import { z } from 'zod';
+import type { CallContext } from '../../contracts/index.ts';
+import { HubError } from '../../domain/errors.ts';
+import { messageSchema, questionSchema, sessionSchema, type OpenCodeConnection } from './schema.ts';
+
+/** Only the trusted backend receives this object. Responses are projected, never proxied. */
+export class OpenCodeClient {
+  readonly connection: OpenCodeConnection;
+  constructor(connection: OpenCodeConnection) { this.connection = connection; }
+
+  async request(ctx: CallContext, path: string, body?: unknown): Promise<unknown> {
+    try {
+      const url = new URL(path, this.connection.origin);
+      url.searchParams.set('directory', this.connection.directory);
+      const response = await ky(url, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { authorization: this.connection.authorization },
+        ...(body === undefined ? {} : { json: body }),
+        ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+        timeout: 10_000, retry: 0, redirect: 'error',
+      });
+      if (response.status === 204) return null;
+      const reader = response.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      if (reader) {
+        try {
+          for (;;) {
+            const item = await reader.read();
+            if (item.done) break;
+            size += item.value.byteLength;
+            if (size > 2 * 1024 * 1024) {
+              await reader.cancel();
+              throw new HubError({ code: 'opencode_response_limit', category: 'provider_failure',
+                message: 'OpenCode response exceeds the 2 MiB read budget. Inspect the native session.', retry: 'manual_action' });
+            }
+            chunks.push(item.value);
+          }
+        } finally { reader.releaseLock(); }
+      }
+      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } catch (error) {
+      if (error instanceof HubError) throw error;
+      if (error instanceof HTTPError) throw new HubError({
+        code: `opencode_http_${error.response.status}`,
+        category: error.response.status === 401 ? 'authentication' : 'provider_failure',
+        message: `OpenCode returned HTTP ${error.response.status}. Check the saved connection and native session.`,
+        retry: body === undefined ? 'read_only_retry' : 'reconcile_first',
+      });
+      if (error instanceof Error) throw new HubError({
+        code: error instanceof TimeoutError ? 'opencode_timeout' : 'opencode_transport', category: 'unavailable',
+        message: 'OpenCode is unreachable or returned an incompatible response. Check the scoped connection; do not resend uncertain input.',
+        retry: body === undefined ? 'read_only_retry' : 'reconcile_first',
+      });
+      throw error;
+    }
+  }
+
+  async discover(ctx: CallContext) {
+    const [health, path, agents, providers] = await Promise.all([
+      this.request(ctx, '/global/health'), this.request(ctx, '/path'),
+      this.request(ctx, '/agent'), this.request(ctx, '/config/providers'),
+    ]);
+    const version = z.object({ healthy: z.literal(true), version: z.string() }).parse(health).version;
+    const directory = z.object({ directory: z.string() }).parse(path).directory;
+    if (directory !== this.connection.directory) throw new HubError({ code: 'opencode_directory_mismatch',
+      category: 'identity_mismatch', message: 'OpenCode did not resolve the selected working directory.', retry: 'manual_action' });
+    const inventory = z.object({ providers: z.array(z.object({
+      id: z.string(), models: z.record(z.string(), z.unknown()),
+    })) }).parse(providers);
+    return {
+      version, directory,
+      agents: z.array(z.object({ name: z.string(), mode: z.string(), hidden: z.boolean().nullish() })).parse(agents)
+        .filter((agent) => agent.hidden !== true && agent.mode !== 'subagent').map((agent) => agent.name),
+      models: inventory.providers
+        .flatMap((provider) => Object.keys(provider.models).map((modelID) => ({ providerID: provider.id, modelID }))),
+    };
+  }
+  async session(ctx: CallContext, id: string) {
+    const session = sessionSchema.parse(await this.request(ctx, `/session/${encodeURIComponent(id)}`));
+    if (session.id !== id || session.directory !== this.connection.directory) throw new HubError({
+      code: 'opencode_session_mismatch', category: 'identity_mismatch',
+      message: 'The native session does not belong to the configured working directory.', retry: 'never',
+    });
+    return session;
+  }
+  async messages(ctx: CallContext, id: string) {
+    return z.array(messageSchema).parse(await this.request(ctx, `/session/${encodeURIComponent(id)}/message?limit=100`));
+  }
+  async questions(ctx: CallContext, id: string) {
+    return z.array(questionSchema).parse(await this.request(ctx, '/question')).filter((question) => question.sessionID === id);
+  }
+}
