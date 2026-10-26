@@ -3,9 +3,11 @@
 A small, task-centered workspace for durable work records, human questions and
 deliberate agent delegation. Built from the supplied v0.3 implementation baseline.
 
-**All included runtime and environment connections are deterministic simulations.**
-There is no live DIM, agent-vendor, model-provider, Docker or control-plane adapter.
-Simulator conformance and core readiness do not establish production compatibility.
+**The default configuration uses deterministic simulations.** Optional backend-only
+OpenCode and DIM workspace-scoped adapters are described in
+[Live integration and operator setup](docs/live-integration.md). Actual OpenCode
+acceptance is distinct from simulator conformance; full DIM/AKB cross-service
+acceptance remains blocked on the owner interfaces and scoped operator setup.
 
 ## Quick start
 
@@ -116,6 +118,6 @@ excluded from work exports; do not paste secrets into task text or runtime outpu
 - [Acceptance traceability](docs/acceptance.md)
 - [Executed verification and limits](docs/verification.md)
 
-Production connectors, terminal/native gateways, workflows, automatic retries,
-agent review engines, merges, IDE functionality and infrastructure management are
-explicitly outside this phase. No host or control-plane installation is modified.
+Production qualification, terminal gateways, workflows, automatic prompt retries,
+agent review engines, merges, IDE functionality and infrastructure management remain
+outside the adapters. No host or control-plane installation is modified.
