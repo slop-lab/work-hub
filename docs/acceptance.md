@@ -40,7 +40,7 @@ Run all scenarios with `npm run test:acceptance`.
 | AT-29 | `AT-29 continuation after termination creates a distinct attempt and immutable snapshot in the same session` | Pass. |
 | AT-30 | `AT-30 a lost stop acknowledgment never creates a false terminal state` | Pass: stop intent recorded, outcome absent, Attempt unresolved. |
 | AT-31 | `AT-31 lost allocation response is reconciled by the original operation ID without duplicate allocation` | Pass: one allocation call and eventual running Attempt. |
-| AT-32 | `AT-32 cancellation during provisioning fences late readiness and tracks cleanup separately` | Pass: the original waiting allocation becomes ready after stop intent; exact trace is allocation → cancel request → granted release, with zero native session/input calls and a released binding. |
+| AT-32 | `AT-32 cancellation during provisioning fences late readiness and tracks cleanup separately` | Pass: the original waiting allocation becomes ready after stop intent; exact trace is allocation, cancel request, then granted release, with zero native session/input calls and a released binding. |
 | AT-33 | `AT-22/33/40: scoped bridge question, human answer, explicit acknowledgment and nonterminal result` | Pass: Result saved while Attempt remains unresolved and task active. |
 | AT-34 | `AT-34 a late old result is retained without replacing a newer primary attempt or human intent` | Pass. |
 | AT-35 | `AT-35 task and profile edits cannot rewrite a running attempt's immutable snapshot` | Pass: byte-equivalent snapshot and pinned profile revision. |

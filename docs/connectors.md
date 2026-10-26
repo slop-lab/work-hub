@@ -9,7 +9,14 @@ The public provider-neutral contract is exported from `application/contracts/ind
 
 Boundary schemas use strict Zod objects. `parseSerializedOperationReceipt()` dispatches the closed receipt union by `status`; unknown fields or statuses are rejected.
 
-For reconciliation, use `validateSerializedOperationReceipt(value)`. It first validates the closed `OperationReceipt<JsonValue>` envelope, then dispatches confirmed results through `ConnectorOperationResultSchemas` using both `operationKind` and `resultSchemaId`. Unknown operation kinds, mismatched schema IDs, and malformed typed results are rejected before state is applied. `RuntimeEventSchema` performs the equivalent closed validation for runtime event envelopes and payload variants. All schemas are exported from `application/contracts/index.ts`.
+For reconciliation, use `validateSerializedOperationReceipt(value)`. It first
+validates the closed `OperationReceipt<JsonValue>` envelope, then dispatches
+confirmed results through `ConnectorOperationResultSchemas` using both
+`operationKind` and `resultSchemaId`. Unknown operation kinds, mismatched schema
+IDs, and malformed typed results are rejected before state is applied.
+`RuntimeEventSchema` performs the equivalent closed validation for runtime event
+envelopes and payload variants. All schemas are exported from
+`application/contracts/index.ts`.
 
 ## Facade
 
@@ -53,7 +60,7 @@ The simulator never invokes a shell, network client, container engine, runtime b
 - `seedSession(input)` prepares an idle, running, waiting, ended, or unknown native session for attach-existing tests without submitting work.
 - `setRuntimeReadiness(routeId, readiness)` scripts probe readiness and unmet requirements.
 - `setReleaseResult(allocationId, result)` selects exact retained, stopped, deleted, or provider-managed release outcomes.
-- `calls.list()` returns ordered evidence for negative assertions such as “verification made no allocation call” or “attachment submitted no initial work.”
+- `calls.list()` returns ordered evidence for negative assertions such as "verification made no allocation call" or "attachment submitted no initial work."
 
 Operation kind strings are the interface name plus method, for example `execution.requestAllocation`, `execution.releaseAllocation`, `runtime.openSession`, `runtime.startAttempt`, and `runtime.requestStop`.
 
