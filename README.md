@@ -28,6 +28,9 @@ to `./data`; use `DATA_DIR=/path/to/private-data` for persistent deployment.
 npm run dev                # restart the backend when TypeScript changes
 npm run build              # rebuild browser assets after frontend changes
 npm run typecheck          # strict TypeScript
+npm run quality            # QG repository rules, then existing types/tests/build
+npm run quality:staged     # staged rule inputs; same working-tree checks
+npm run quality:rules      # full rule scan only, not the complete CI gate
 npm test                   # behavior, contract and HTTP tests
 npm run test:contracts     # connector conformance
 npm run test:acceptance    # acceptance scenarios
@@ -115,6 +118,7 @@ excluded from work exports; do not paste secrets into task text or runtime outpu
 - [Design system](DESIGN.md)
 - [Acceptance traceability](docs/acceptance.md)
 - [Executed verification and limits](docs/verification.md)
+- [Repository quality gates](docs/quality-gates.md)
 
 Production connectors, terminal/native gateways, workflows, automatic retries,
 agent review engines, merges, IDE functionality and infrastructure management are
