@@ -67,8 +67,15 @@ or untyped assertion was added.
 - Route IDs, setup and credential handling: [live integration](live-integration.md).
 
 Screenshots, browser output, runtime credentials, databases and the local Blocks
-checkout remain ignored/untracked. The original QG candidate/package changes
-were not imported or duplicated. No unrelated session/workspace was reset.
+checkout remain ignored/untracked. The integration-only checkpoint is
+`66b2fd2e6209e9c7aaeef109cbdc0c66023516bc`. The operator subsequently required
+exact QG candidate `31120c1b2945395464b31998db6223852f0715b4`; it and all its
+ancestry were normally merged without conflicts. The `@slop-lab/qg@0.1.0` pin,
+lockfile, enabled rules, thresholds and source entrypoint are preserved.
+Only the exact ignored external Blocks checkout was added to the downloaded
+artifact registry, and two integration statements were wrapped without behavior
+changes. Final combined source/actual-service verification is reported with the
+combined candidate SHA in the handoff. No unrelated session/workspace was reset.
 
 ## Not verified / not claimed
 

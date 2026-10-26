@@ -1,8 +1,10 @@
 # Optional live integration: implementation and limits
 
 Branch: `integration/dim-opencode-live`, based on native `origin/main`
-`8269a7777e7d572b47919b9733331746b96c6204`. The QG candidate is separate and has
-not been assumed merged. No package or QG changes are included in this slice.
+`8269a7777e7d572b47919b9733331746b96c6204`. The integration-only checkpoint is
+`66b2fd2e6209e9c7aaeef109cbdc0c66023516bc`. The operator's finish sequence then
+normally merged exact QG candidate `31120c1b2945395464b31998db6223852f0715b4`
+and its ancestry, preserving its package pin, lockfile, rules and source entrypoint.
 
 ## Responsibility and evidence
 
@@ -89,10 +91,10 @@ credentials or working installation identifiers:
 }
 ```
 
-Use **Settings → Discover connections** to inspect actual agent/model availability
+Use **Settings > Discover connections** to inspect actual agent/model availability
 and directory. Save an execution profile with an explicit project mapping.
 Delegate only from a task. For an existing native session, copy its exact discovery
-reference into **Session → Attach existing agent session**. Observe is the default;
+reference into **Session > Attach existing agent session**. Observe is the default;
 attachment sends no greeting, resume or initial task input. Native open links are
 operator-configured authenticated inspection/fallback URLs, never share-token URLs.
 
@@ -114,7 +116,7 @@ These are saved operator attestations, not discovery invented by Work Hub. They
 expire closed and require revalidation after recreation. OpenCode `/path` verifies
 the configured working directory. Names and URLs are not stable identity.
 
-Settings can register these exact targets, then **Environments → Verify read-only**
+Settings can register these exact targets, then **Environments > Verify read-only**
 performs scoped discovery. Attach/detach mutate Hub-owned access records only.
 No target contents or lifecycle are changed. Grant references and route membership
 are checked before attaching/opening; the derived runtime authority retains its
@@ -213,8 +215,8 @@ promotion, production installation or full integration acceptance.
    workspace/project mapping in [the owner handoff](akb-owner-contract.md). Then
    implement that actual transport and the context/proposal UI; no fake endpoint
    or auto-acceptance is supplied in this branch.
-3. Root: run native DIM CI, human review and merge/install using the exact proposed
-   SHA. QG can be reviewed/merged independently; this branch does not promote it.
-4. Run the full Blocks Page → exact AKB revision → DIM/OpenCode → explicit result
-   evidence → human completion → AKB proposal → fresh-browser human acceptance
+3. Root: run native DIM CI, human review and merge/install using the exact combined
+   proposed SHA. Incorporating QG does not approve or promote either slice.
+4. Run the full Blocks Page > exact AKB revision > DIM/OpenCode > explicit result
+   evidence > human completion > AKB proposal > fresh-browser human acceptance
    only after those interfaces/principals are provisioned.
