@@ -1,0 +1,25 @@
+scan:
+  defaultMode: full
+
+artifacts:
+  generated:
+    include:
+      - "**/.env"
+      - "**/*.sqlite"
+      - "**/*.sqlite-shm"
+      - "**/*.sqlite-wal"
+      - .codegraph/**
+      - .omo/**
+      - .playwright-mcp/**
+      - .screenshots/**
+      - data/**
+      - playwright-report/**
+      - test-results/**
+
+checks:
+  - name: source
+    type: command
+    command: npm
+    args: [run, check]
+    timeoutMs: 180000
+    message: Fix strict types, behavioral tests, or the browser build before proceeding.

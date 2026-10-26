@@ -3,7 +3,9 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "bootstrap": "node application/api/bootstrap.ts",
     "dev": "node --watch application/api/server.ts",
@@ -14,7 +16,10 @@
     "test:contracts": "node --test tests/contracts*.test.ts",
     "test:acceptance": "node --test tests/acceptance*.test.ts",
     "test:browser": "playwright test",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "quality": "qg check --full",
+    "quality:staged": "qg check --staged",
+    "quality:rules": "qg check --full --rules-only"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
@@ -26,6 +31,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.3.0",
     "@playwright/test": "^1.56.0",
+    "@slop-lab/qg": "0.1.0",
     "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.0"
