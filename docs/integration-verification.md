@@ -55,6 +55,24 @@ transport/schema, native ownership, input receipts, observations and configured
 connection projection. Boundary values are parsed with Zod; no type-suppression
 or untyped assertion was added.
 
+## Narrow transport review closure
+
+An independent review found that Ky's own timer stops after response headers.
+The connector now races the complete request/body operation against its unchanged
+ten-second deadline and caller cancellation, with non-blocking stream cleanup.
+Safe cancellation errors preserve read-only retry versus mutation reconciliation;
+caller cancellation reasons and provider bodies are not exposed.
+
+Disposable loopback acceptance reproduces an HTTP 200 response with flushed
+headers and a JSON body that never ends. Before the fix it remained pending after
+12 seconds; after the fix it failed with `opencode_timeout` at about 10.01 seconds.
+An oversized synthetic stream whose `cancel()` never settles previously hung;
+it now reports the unchanged 2 MiB limit promptly and releases its reader lock.
+Caller cancellation after headers also settles promptly, hides its private reason
+and sends the mutation only once. All three transport regressions and the existing
+OpenCode conformance tests passed together. Final combined source and relevant
+actual-service/browser verification are reported with the final candidate SHA.
+
 ## Persistent development record
 
 - UI: `https://work-hub-integration--workhub-ui.mj-y.com/`.

@@ -31,7 +31,10 @@ used to verify these interfaces:
 
 Configured-provider discovery avoids the unrelated global `/provider` catalog,
 observed at about 7.1 MiB. Transport reads remain bounded to 2 MiB with a 10-second
-timeout, redirects refused and automatic HTTP retries disabled. Agents with
+whole-operation deadline covering response headers and body reads, redirects
+refused and automatic HTTP retries disabled. Caller cancellation also settles
+the entire operation; stream cancellation is initiated but never awaited on the
+failure path. Agents with
 `hidden: null` are handled as reported by this installed server. Agent/model
 selection is explicit, checked again before input, and never silently replaced.
 OMO role model choices and configuration are not rewritten.
