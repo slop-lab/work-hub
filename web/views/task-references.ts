@@ -24,6 +24,8 @@ export function referenceSection(ctx: UiContext, task: HubTask): HTMLElement {
 		});
 	});
 	const references = ctx.state.references.filter((item) => item.taskId === task.id);
-	const history = references.length === 0 ? el("p", { class: "muted" }, "No retained text or links yet.") : el("div", { class: "history-list" }, ...references.map((item) => el("article", { class: "history-item" }, el("div", { class: "cluster" }, badge(item.kind, "info"), el("strong", {}, item.title)), item.retainedText == null ? el("a", { class: 'captured-text', href: item.url ?? "#", target: "_blank", rel: "noreferrer" }, item.url ?? "Unavailable link") : el("p", { class: 'captured-text' }, item.retainedText))));
+	const history = references.length === 0 ? el("p", { class: "muted" }, "No retained text or links yet.") : el("div", { class: "history-list" },
+		...references.map((item) => el("article", { class: "history-item" }, el("div", { class: "cluster" }, badge(item.kind, "info"), el("strong", {}, item.title)),
+			item.retainedText == null ? el("a", { class: 'captured-text', href: item.url ?? "#", target: "_blank", rel: "noreferrer" }, item.url ?? "Unavailable link") : el("p", { class: 'captured-text' }, item.retainedText))));
 	return el("div", { class: "stack" }, form, history);
 }

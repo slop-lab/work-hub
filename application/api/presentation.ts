@@ -91,7 +91,11 @@ export function presentState({ snapshot, actor, administration, output = [], sim
       };
     }),
     environmentBindings: bindings,
-    profiles: snapshot.profiles.map((profile) => ({ ...profile, defaultEnvironmentMode: profile.defaultEnvironment['mode'], simulator: administration.installations.list(actor).find((installation) => installation.id === profile.runtimeInstallationId)?.simulator ?? false, limitations: [administration.installations.list(actor).find((installation) => installation.id === profile.runtimeInstallationId)?.simulator ? 'Deterministic simulator, not real-service evidence.' : 'Configured external adapter; inspect its reported capabilities and limitations.', ...(profile.runtimeInstallationId === 'runtime-sim-limited' ? ['Limited bridge interaction; unsupported controls are refused.'] : [])] })),
+    profiles: snapshot.profiles.map((profile) => ({ ...profile, defaultEnvironmentMode: profile.defaultEnvironment['mode'],
+      simulator: administration.installations.list(actor).find((installation) => installation.id === profile.runtimeInstallationId)?.simulator ?? false,
+      limitations: [administration.installations.list(actor).find((installation) => installation.id === profile.runtimeInstallationId)?.simulator
+        ? 'Deterministic simulator, not real-service evidence.' : 'Configured external adapter; inspect its reported capabilities and limitations.',
+        ...(profile.runtimeInstallationId === 'runtime-sim-limited' ? ['Limited bridge interaction; unsupported controls are refused.'] : [])] })),
     attention: {
       answerNeeded: snapshot.dashboard.answerNeeded.map(attentionRequest),
       approvalNeeded: snapshot.dashboard.approvalNeeded.map(attentionRequest),
