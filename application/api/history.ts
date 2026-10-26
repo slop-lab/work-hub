@@ -19,7 +19,9 @@ export function presentOperation(raw: Readonly<Record<string, unknown>>) {
   const row = operationRow.parse(raw);
   const receipt = row.receiptJson === null ? undefined : operationReceipt.safeParse(JSON.parse(row.receiptJson));
   const detail = receipt?.success === true ? receipt.data : undefined;
-  return { id: row.id, commandId: row.commandId, connectorKind: row.connectorKind, installationId: row.installationId, operationKind: row.operationKind, ...(detail?.operationKind === undefined ? {} : { providerOperationKind: detail.operationKind }), stage: row.stage, ...(row.targetId === null ? {} : { targetId: row.targetId }), ...(row.targetGeneration === null ? {} : { targetGeneration: row.targetGeneration }), status: row.status, updatedAt: row.updatedAt, observedAt: detail?.evidence?.observedAt ?? row.updatedAt, ...(detail?.error === undefined ? {} : { error: detail.error }), ...(detail?.reconciliationHint === undefined ? {} : { reconciliationHint: detail.reconciliationHint }), canReconcile: row.status === 'unknown' && detail?.error?.retry === 'reconcile_first' };
+  return { id: row.id, commandId: row.commandId, connectorKind: row.connectorKind, installationId: row.installationId,
+    operationKind: row.operationKind, ...(detail?.operationKind === undefined ? {} : { providerOperationKind: detail.operationKind }), stage: row.stage, ...(row.targetId === null ? {} : { targetId: row.targetId }), ...(row.targetGeneration === null ? {} : { targetGeneration: row.targetGeneration }), status: row.status,
+    updatedAt: row.updatedAt, observedAt: detail?.evidence?.observedAt ?? row.updatedAt, ...(detail?.error === undefined ? {} : { error: detail.error }), ...(detail?.reconciliationHint === undefined ? {} : { reconciliationHint: detail.reconciliationHint }), canReconcile: row.status === 'unknown' && detail?.error?.retry === 'reconcile_first' };
 }
 
 export function presentHistory(snapshot: HubSnapshot) {
