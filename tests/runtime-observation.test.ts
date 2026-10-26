@@ -230,3 +230,36 @@ test("late running observation cannot reopen a terminal attempt", async () => {
   simulators.close();
   store.close();
 });
+
+test('an older native attempt observation cannot finish the current Hub attempt', async () => {
+  const { store, simulators } = await fixture();
+  seedBinding(store, 'current-attempt');
+  const runtime = runtimeProxy(simulators.runtime, {
+    inspectSession: async (context, target) => ({ value: { ...observation(target.hubSessionId),
+      execution: { hubAttemptId: 'previous-attempt', phase: 'ended', termination: 'failed', pendingNativeRequestRefs: [] } },
+      sourceInstallationId: context.installationId, observedAt, assurance: 'authoritative', limitations: [] }),
+    readOutput: async () => ({ items: [], coverage: 'complete_available', gaps: [] }),
+    subscribe: async function* () {},
+  });
+  try {
+    await worker(store, runtime).run(1);
+    assert.equal(new ExecutionRepository(store.database, store.clock).getAttempt('workspace-default', 'attempt:current-attempt').phase, 'running');
+  } finally { simulators.close(); store.close(); }
+});
+
+test('connector output gaps remain durable and visible without native subscription events', async () => {
+  const { store, simulators } = await fixture();
+  seedBinding(store, 'partial-output');
+  const runtime = runtimeProxy(simulators.runtime, {
+    inspectSession: async (context, target) => ({ value: observation(target.hubSessionId),
+      sourceInstallationId: context.installationId, observedAt, assurance: 'authoritative', limitations: [] }),
+    readOutput: async () => ({ items: [], coverage: 'partial', gaps: [{ reason: 'native-history-omitted' }] }),
+    subscribe: async function* () {},
+  });
+  try {
+    await worker(store, runtime).run(1);
+    await worker(store, runtime).run(1);
+    assert.equal(store.database.prepare("SELECT COUNT(*) AS count FROM output_chunks WHERE attempt_id=? AND json_extract(item_json,'$.kind')='gap'")
+      .get('attempt:partial-output')?.['count'], 1);
+  } finally { simulators.close(); store.close(); }
+});

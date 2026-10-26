@@ -13,6 +13,7 @@ import type { StateRepository } from "../persistence/state-repository.ts";
 import type { ConnectorRegistry } from "./connectors.ts";
 import { RuntimeEventReconciler } from "./runtime-event-reconciler.ts";
 import { runtimeTarget } from "./runtime-codec.ts";
+import { digest } from '../persistence/codec.ts';
 
 const subscriptionEnded = Symbol("subscription-ended");
 
@@ -80,7 +81,8 @@ export class ReconcileWorker {
       this.input.state.markSessionUnreachable(binding.workspaceId, binding.sessionId);
       return;
     }
-    if (session.activeAttemptId !== undefined) {
+    if (session.activeAttemptId !== undefined && (observation.value.execution.hubAttemptId === undefined ||
+      observation.value.execution.hubAttemptId === session.activeAttemptId)) {
       this.events.applyExecution(binding.workspaceId, session.activeAttemptId, observation.value.execution);
     }
     const cursors = this.input.observation.observationCursors(binding.workspaceId, session.id);
@@ -89,10 +91,14 @@ export class ReconcileWorker {
       { target, ...(cursors.output === undefined ? {} : { after: cursors.output }), limit: 1_000 },
     ));
     this.input.observation.saveOutputPage({ workspaceId: binding.workspaceId, sessionId: session.id,
-      bindingGeneration: binding.generation, items: output.items.map((item) => ({
+      bindingGeneration: binding.generation, items: [...output.gaps.map((gap) => ({
+        ...(session.activeAttemptId === undefined ? {} : { attemptId: session.activeAttemptId }),
+        sourceItemId: `history-gap:${session.activeAttemptId ?? 'session'}:${digest(gap)}`,
+        item: { kind: 'gap', role: 'runtime', text: gap.reason, observedAt: observation.observedAt },
+      })), ...output.items.map((item) => ({
         ...(item.hubAttemptId === undefined ? {} : { attemptId: item.hubAttemptId }),
         ...(item.sourceItemId === undefined ? {} : { sourceItemId: item.sourceItemId }), item,
-      })), ...(output.nextCursor === undefined ? {} : { nextCursor: output.nextCursor }) });
+      }))], ...(output.nextCursor === undefined ? {} : { nextCursor: output.nextCursor }) });
     if (connector.subscribe === undefined) return;
     await this.consumeSubscription(connector.subscribe.bind(connector), context, target, cursors.events,
       binding.workspaceId, session.id);
