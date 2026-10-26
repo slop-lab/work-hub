@@ -57,7 +57,7 @@ function resultProvenance(ctx: UiContext, result: HubResult): HTMLElement {
 		el('p', { class: 'mono' }, `Attempt ${result.attemptId} · Session ${attempt?.sessionId ?? 'Unavailable'}`));
 	if (result.evidence.length === 0) provenance.append(el('p', { class: 'muted' }, 'No supporting evidence recorded. A submitted result is not proof of completion.'));
 	for (const evidence of result.evidence) provenance.append(el('div', {},
-		el('strong', {}, evidenceLabels[evidence.origin]), el('p', {}, evidence.detail)));
+		el('strong', {}, evidenceLabels[evidence.origin]), el('p', { class: 'captured-text' }, evidence.detail)));
 	if (result.referenceIds.length > 0) provenance.append(el('strong', {}, 'Result references'));
 	for (const id of result.referenceIds) {
 		const reference = ctx.state.references.find((item) => item.id === id);

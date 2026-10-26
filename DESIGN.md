@@ -156,6 +156,9 @@ Base unit: 4px.
 - **Structure:** retained text or an unfetched HTTP(S) link, title, availability, and explicit delegation checkbox.
 - **States:** empty, retained text, external/unverified link, unavailable.
 - **Safety:** saving a link records metadata only; the browser and hub never fetch it as part of creation.
+- **Captured external text:** `.captured-text` preserves line breaks and wraps long
+  URLs, revision IDs and digests anywhere without enlarging a grid's intrinsic
+  minimum width. Result provenance uses the same inherited body-text primitive.
 
 ### Business Decision Panel
 - **Structure:** completion note, explicit active-execution decision, complete/cancel/reopen/archive actions.
@@ -184,6 +187,8 @@ Base unit: 4px.
 - Animate only opacity and transform. Dialog enters with a small opacity/translate change.
 - `prefers-reduced-motion: reduce` removes transitions and smooth scrolling.
 - Drafts persist to sessionStorage by user + session + attempt, never include login tokens, and are blocked when their attempt target is stale.
+- Background refresh preserves the current route's main scroll position as well
+  as field drafts. Navigating to another route starts at its top.
 
 ## 7. Depth & Surface
 
