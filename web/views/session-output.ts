@@ -20,7 +20,9 @@ export function sessionOutput(ctx: UiContext, session: HubSession, attempt?: Hub
 function renderPage(ctx: UiContext, session: HubSession, attempt: HubAttempt | undefined, region: HTMLElement, page: OutputPage, accumulated: readonly OutputPage["items"][number][] = [], key: string): void {
 	const items = [...accumulated, ...page.items];
 	cache.set(key, { items, page });
-	const list = items.length === 0 ? el("div", { class: "empty-state" }, el("h3", {}, "No output yet"), el("p", {}, "Opening this view does not start or resume work.")) : el("ol", { class: "transcript" }, ...items.map((item) => el("li", { class: `transcript-entry transcript-entry--${item.role ?? "runtime"}` }, el("div", { class: "transcript-entry__meta" }, el("strong", {}, item.role ?? item.kind), el("time", { datetime: item.observedAt }, formatTime(item.observedAt)), item.partial === true ? badge("partial", "warning") : null), el("p", { class: item.kind === "gap" ? "gap-message" : "" }, item.text ?? "Reference output"))));
+	const list = items.length === 0
+		? el("div", { class: "empty-state" }, el("h3", {}, "No output yet"), el("p", {}, "Opening this view does not start or resume work."))
+		: el("ol", { class: "transcript" }, ...items.map((item) => el("li", { class: `transcript-entry transcript-entry--${item.role ?? "runtime"}` }, el("div", { class: "transcript-entry__meta" }, el("strong", {}, item.role ?? item.kind), el("time", { datetime: item.observedAt }, formatTime(item.observedAt)), item.partial === true ? badge("partial", "warning") : null), el("p", { class: item.kind === "gap" ? "gap-message" : "" }, item.text ?? "Reference output"))));
 	const status = el("p", { class: "muted" }, `${items.length} retained entries · ${page.coverage.replaceAll("_", " ")}`);
 	const gaps = page.gaps.map((gap) => el("p", { class: "limitation" }, gap.reason));
 	let more: HTMLButtonElement | null = null;

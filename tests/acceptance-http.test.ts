@@ -89,7 +89,8 @@ test('AT-02/24: another authenticated client reads a committed human answer afte
   assert.ok(memberId);
   const secondToken = auth.issueUser(memberId);
   const app = createApplication({ hub, auth, origin: 'http://localhost:3000', secureCookies: false });
-  const created = await app.request('/api/v1/commands', { method: 'POST', headers: { Authorization: `Bearer ${firstToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ commandId: 'human-question', type: 'request.create', payload: { kind: 'question', projectId: 'project-default', recipient: { kind: 'project_members', projectId: 'project-default' }, prompt: 'Which release is the target?', referenceIds: [], answerSchema: { kind: 'text', minLength: 1, maxLength: 100 }, blocking: 'none', validity: { kind: 'project', projectId: 'project-default' } } }) });
+  const created = await app.request('/api/v1/commands', { method: 'POST', headers: { Authorization: `Bearer ${firstToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commandId: 'human-question', type: 'request.create', payload: { kind: 'question', projectId: 'project-default', recipient: { kind: 'project_members', projectId: 'project-default' }, prompt: 'Which release is the target?', referenceIds: [], answerSchema: { kind: 'text', minLength: 1, maxLength: 100 }, blocking: 'none', validity: { kind: 'project', projectId: 'project-default' } } }) });
   assert.equal(created.status, 200);
   const requestId = z.object({ objectRefs: z.array(z.object({ id: z.string() })) }).parse(await created.json()).objectRefs[0]?.id;
   assert.ok(requestId);

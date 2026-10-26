@@ -16,7 +16,8 @@ test('a request cannot inject a blocker into a task in another project', async (
     const projectId = project.objectRefs[0]?.id; assert.ok(projectId);
     const task = await hub.execute(admin, { commandId: 'other-task', type: 'task.create', payload: { projectId, title: 'Private project work' } });
     const taskId = task.objectRefs[0]?.id; assert.ok(taskId);
-    const receipt = await hub.execute({ ...admin, id: 'scoped-member', role: 'member', projectIds: ['project-default'] }, { commandId: 'cross-project-blocker', type: 'request.create', payload: { kind: 'question', projectId: 'project-default', taskId, recipient: { kind: 'project_members', projectId: 'project-default' }, prompt: 'This must not block another project', referenceIds: [], answerSchema: { kind: 'text', minLength: 1, maxLength: 100 }, blocking: 'before_delegate', validity: { kind: 'task', taskId } } });
+    const receipt = await hub.execute({ ...admin, id: 'scoped-member', role: 'member', projectIds: ['project-default'] },
+      { commandId: 'cross-project-blocker', type: 'request.create', payload: { kind: 'question', projectId: 'project-default', taskId, recipient: { kind: 'project_members', projectId: 'project-default' }, prompt: 'This must not block another project', referenceIds: [], answerSchema: { kind: 'text', minLength: 1, maxLength: 100 }, blocking: 'before_delegate', validity: { kind: 'task', taskId } } });
     assert.equal(receipt.status, 'rejected');
     assert.equal(hub.snapshot(admin).requests.length, 0);
   } finally { hub.close(); rmSync(root, { recursive: true }); }
@@ -50,7 +51,10 @@ test('an approval that expires after commitment is suppressed before native deli
     assert.ok(session); assert.ok(attempt); assert.ok(session.nativeIdentityKey);
     const nativeSession = NativeRefSchema.parse(JSON.parse(session.nativeIdentityKey));
     const action = { effect: 'work.write', resource: 'simulated-action-one' };
-    const request = await hub.execute(admin, { commandId: 'action-approval', type: 'request.create', payload: { kind: 'approval', projectId: 'project-default', taskId, sessionId: session.id, attemptId: attempt.id, bindingGeneration: session.bindingGeneration, recipient: { kind: 'user', userId: admin.id }, prompt: 'Approve this exact simulated action?', referenceIds: [], answerSchema: { kind: 'approval', allowed: ['approve', 'deny'] }, blocking: 'runtime_action', responseRoute: 'native', actionDescription: action, validity: { kind: 'attempt', target: { hubSessionId: session.id, hubAttemptId: attempt.id, nativeSession, bindingGeneration: session.bindingGeneration, controlGrantRef: `control:${session.id}` }, nativeRequestRef: { ...nativeSession, kind: 'request', id: 'native-action-one' }, actionDigest: digest(action), policyRevision: '1', environmentIdentities: [], expiresAt: new Date(now + 1000).toISOString() } } });
+    const request = await hub.execute(admin, { commandId: 'action-approval', type: 'request.create', payload: { kind: 'approval', projectId: 'project-default', taskId, sessionId: session.id, attemptId: attempt.id, bindingGeneration: session.bindingGeneration, recipient: { kind: 'user', userId: admin.id }, prompt: 'Approve this exact simulated action?', referenceIds: [],
+      answerSchema: { kind: 'approval', allowed: ['approve', 'deny'] }, blocking: 'runtime_action', responseRoute: 'native', actionDescription: action,
+      validity: { kind: 'attempt', target: { hubSessionId: session.id, hubAttemptId: attempt.id, nativeSession, bindingGeneration: session.bindingGeneration, controlGrantRef: `control:${session.id}` }, nativeRequestRef: { ...nativeSession, kind: 'request', id: 'native-action-one' }, actionDigest: digest(action), policyRevision: '1',
+        environmentIdentities: [], expiresAt: new Date(now + 1000).toISOString() } } });
     assert.equal(request.status, 'confirmed');
     const requestId = request.objectRefs[0]?.id; assert.ok(requestId);
     const answer = await hub.execute(admin, { commandId: 'approve-action', type: 'request.respond', target: { kind: 'request', id: requestId }, expected: { request: 1, bindingGeneration: session.bindingGeneration }, payload: { answer: { kind: 'approval', decision: 'approve' } } });

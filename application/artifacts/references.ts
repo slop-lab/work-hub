@@ -24,7 +24,18 @@ export class ReferenceRepository {
     }
     const id = newId('reference');
     const now = this.store.clock.now().toISOString();
-    this.store.database.prepare('INSERT INTO references_store(id,workspace_id,task_id,kind,title,mime_type,provenance_json,locator_json,retained_text,availability,content_revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, actor.workspaceId, input.taskId, reference.kind, reference.title, reference.kind === 'text' ? 'text/plain' : 'text/uri-list', JSON.stringify({ origin: 'human_assertion', authorId: actor.id, retainedByHub: reference.kind === 'text', fetchedByHub: false }), reference.kind === 'link' ? JSON.stringify({ url: reference.url }) : null, reference.kind === 'text' ? reference.content : null, reference.kind === 'text' ? 'available' : 'unverified', digest(reference.kind === 'text' ? reference.content : reference.url), now, now);
+    this.store.database.prepare(`INSERT INTO references_store(
+      id,workspace_id,task_id,kind,title,mime_type,provenance_json,locator_json,retained_text,
+      availability,content_revision,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      id, actor.workspaceId, input.taskId, reference.kind, reference.title,
+      reference.kind === 'text' ? 'text/plain' : 'text/uri-list',
+      JSON.stringify({ origin: 'human_assertion', authorId: actor.id, retainedByHub: reference.kind === 'text', fetchedByHub: false }),
+      reference.kind === 'link' ? JSON.stringify({ url: reference.url }) : null,
+      reference.kind === 'text' ? reference.content : null,
+      reference.kind === 'text' ? 'available' : 'unverified',
+      digest(reference.kind === 'text' ? reference.content : reference.url), now, now,
+    );
     return { kind: 'reference', id, revision: 1 };
   }
   get(actor: Actor, id: string) {

@@ -29,7 +29,21 @@ export class ResponseRecords {
       if (cursor.sessionId !== input.sessionId || cursor.attemptId !== (input.attemptId ?? '') || cursor.generation !== input.bindingGeneration) throw conflict('cursor_scope_mismatch', 'Bridge cursor is outside this credential scope.');
       after = cursor.sequence;
     }
-    const rows = this.database.prepare(`SELECT r.rowid AS sequence,r.id AS responseId,r.answer_digest AS responseDigest,r.answer_json AS answerJson,r.request_id AS requestId,r.request_revision AS requestRevision,d.destination_generation AS bindingGeneration,d.status,r.committed_at AS committedAt FROM responses r JOIN requests q ON q.id=r.request_id JOIN deliveries d ON d.response_id=r.id WHERE r.workspace_id=? AND q.response_route='bridge' AND q.session_id=? AND (? IS NULL OR q.attempt_id=?) AND d.destination_generation=? AND r.rowid>? AND d.status!='suppressed' ORDER BY r.rowid LIMIT 100`).all(input.workspaceId, input.sessionId ?? '', input.attemptId ?? null, input.attemptId ?? null, input.bindingGeneration ?? -1, after).map((raw) => z.object({ sequence: z.number(), responseId: z.string(), responseDigest: z.string(), answerJson: z.string(), requestId: z.string(), requestRevision: z.number(), bindingGeneration: z.number(), status: z.string(), committedAt: z.string() }).parse(raw));
+    const rows = this.database.prepare(`SELECT r.rowid AS sequence,r.id AS responseId,
+      r.answer_digest AS responseDigest,r.answer_json AS answerJson,r.request_id AS requestId,
+      r.request_revision AS requestRevision,d.destination_generation AS bindingGeneration,
+      d.status,r.committed_at AS committedAt FROM responses r
+      JOIN requests q ON q.id=r.request_id JOIN deliveries d ON d.response_id=r.id
+      WHERE r.workspace_id=? AND q.response_route='bridge' AND q.session_id=?
+        AND (? IS NULL OR q.attempt_id=?) AND d.destination_generation=? AND r.rowid>?
+        AND d.status!='suppressed' ORDER BY r.rowid LIMIT 100`).all(
+      input.workspaceId, input.sessionId ?? '', input.attemptId ?? null,
+      input.attemptId ?? null, input.bindingGeneration ?? -1, after,
+    ).map((raw) => z.object({
+      sequence: z.number(), responseId: z.string(), responseDigest: z.string(),
+      answerJson: z.string(), requestId: z.string(), requestRevision: z.number(),
+      bindingGeneration: z.number(), status: z.string(), committedAt: z.string(),
+    }).parse(raw));
     const items = rows.filter((row) => {
       if (this.authority.deliveryAllowed(input.workspaceId, row.requestId, row.responseId)) return true;
       this.updateDelivery(row.responseId, 'suppressed', { code: 'request_target_stale' });
@@ -43,13 +57,29 @@ export class ResponseRecords {
     if (!raw) throw conflict('bridge_scope_mismatch', 'Bridge acknowledgment is outside the credential scope.');
     const requestId = z.object({ requestId: z.string() }).parse(raw).requestId;
     if (!this.authority.deliveryAllowed(input.workspaceId, requestId, input.responseId)) throw conflict('request_target_stale', 'The response target is no longer valid.');
-    const result = this.database.prepare(`UPDATE deliveries SET status='acknowledged',evidence_json=?,updated_at=? WHERE workspace_id=? AND response_id=? AND destination_generation=? AND status IN ('pending','unknown','acknowledged') AND EXISTS(SELECT 1 FROM responses r WHERE r.id=deliveries.response_id AND r.answer_digest=?)`).run(JSON.stringify({ source: 'explicit_bridge_ack', responseDigest: input.responseDigest }), this.clock.now().toISOString(), input.workspaceId, input.responseId, input.bindingGeneration, input.responseDigest);
+    const result = this.database.prepare(`UPDATE deliveries SET status='acknowledged',
+      evidence_json=?,updated_at=? WHERE workspace_id=? AND response_id=?
+      AND destination_generation=? AND status IN ('pending','unknown','acknowledged')
+      AND EXISTS(SELECT 1 FROM responses r
+        WHERE r.id=deliveries.response_id AND r.answer_digest=?)`).run(
+      JSON.stringify({ source: 'explicit_bridge_ack', responseDigest: input.responseDigest }),
+      this.clock.now().toISOString(), input.workspaceId, input.responseId,
+      input.bindingGeneration, input.responseDigest,
+    );
     if (result.changes !== 1) throw conflict('bridge_ack_mismatch', 'Acknowledgment does not match this response digest.');
   }
   updateDelivery(responseId: string, status: 'acknowledged' | 'rejected' | 'unknown' | 'suppressed', evidence: object): void {
     this.database.prepare('UPDATE deliveries SET status=?,evidence_json=?,updated_at=? WHERE response_id=?').run(status, JSON.stringify(evidence), this.clock.now().toISOString(), responseId);
   }
   acknowledgeDeliveryScoped(input: Omit<BridgeAck, 'attemptId'>): void {
-    this.database.prepare(`UPDATE deliveries SET status='acknowledged',evidence_json=?,updated_at=? WHERE workspace_id=? AND response_id=? AND destination_generation=? AND status IN ('pending','unknown','acknowledged') AND EXISTS(SELECT 1 FROM responses p JOIN requests q ON q.id=p.request_id WHERE p.id=deliveries.response_id AND p.answer_digest=? AND q.session_id=?)`).run(JSON.stringify({ source: 'runtime_ack', responseDigest: input.responseDigest }), this.clock.now().toISOString(), input.workspaceId, input.responseId, input.bindingGeneration, input.responseDigest, input.sessionId);
+    this.database.prepare(`UPDATE deliveries SET status='acknowledged',evidence_json=?,updated_at=?
+      WHERE workspace_id=? AND response_id=? AND destination_generation=?
+        AND status IN ('pending','unknown','acknowledged')
+        AND EXISTS(SELECT 1 FROM responses p JOIN requests q ON q.id=p.request_id
+          WHERE p.id=deliveries.response_id AND p.answer_digest=? AND q.session_id=?)`).run(
+      JSON.stringify({ source: 'runtime_ack', responseDigest: input.responseDigest }),
+      this.clock.now().toISOString(), input.workspaceId, input.responseId,
+      input.bindingGeneration, input.responseDigest, input.sessionId,
+    );
   }
 }

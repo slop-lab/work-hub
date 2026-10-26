@@ -9,7 +9,13 @@
 
 ## 1. Atmosphere & Identity
 
-Work Hub feels like a precise engineering notebook rather than a runtime cockpit. The signature is the **attention rail**: actionable work is grouped by the decision a person must make, while task content remains the visual center. Cool mist surfaces and graphite type keep long sessions calm; a restrained vermilion accent marks deliberate human actions. Design read: a responsive operational application for developers and small teams, with Linear-like precision, title-first capture, and explicit safety language. Dials: variance 4, motion 3, density 7.
+Work Hub feels like a precise engineering notebook rather than a runtime cockpit.
+The signature is the **attention rail**: actionable work is grouped by the decision
+a person must make, while task content remains the visual center. Cool mist
+surfaces and graphite type keep long sessions calm; a restrained vermilion accent
+marks deliberate human actions. Design read: a responsive operational application
+for developers and small teams, with Linear-like precision, title-first capture,
+and explicit safety language. Dials: variance 4, motion 3, density 7.
 
 Primary personas:
 - **Maintainer on a laptop:** triages backlog, delegates, answers questions, reviews results, and needs keyboard-efficient navigation.
@@ -44,7 +50,7 @@ Primary personas:
 ### Rules
 - Accent is reserved for interactive choices and the current location, never decoration.
 - Status always includes a text label or icon plus text; color is supplementary.
-- Simulator uses the warning palette and the literal label “Simulator”.
+- Simulator uses the warning palette and the literal label "Simulator".
 - Untrusted text inherits ink tokens and is inserted with `textContent`; rich HTML is not rendered.
 - No dark theme in the initial release. This is an explicit single-theme operational surface, not a consumer page.
 
@@ -150,7 +156,7 @@ Base unit: 4px.
 - **Structure:** role, timestamp, delivery/status metadata, safe text, references.
 - **Variants:** user, agent, runtime, gap.
 - **States:** partial, delivered, unknown, retained-history gap.
-- **Pagination:** retained output loads from the session output query in pages of 50; coverage, gaps, and a “Load more history” control remain visible.
+- **Pagination:** retained output loads from the session output query in pages of 50; coverage, gaps, and a "Load more history" control remain visible.
 
 ### Reference Selector
 - **Structure:** retained text or an unfetched HTTP(S) link, title, availability, and explicit delegation checkbox.
@@ -211,7 +217,7 @@ Strategy: mixed tonal shift plus restrained borders.
 - Full keyboard path for login, capture, filtering, task editing, question answering, delegation, session instruction, review, environment actions, and settings.
 - Visible focus on every interactive element, 44px touch targets on mobile, semantic landmarks/headings, and no focus theft on refresh.
 - 200% zoom and 375px width reflow without primary horizontal scrolling.
-- Plain-language effect copy distinguishes “detach” from “release” and “complete task” from “stop attempt”.
+- Plain-language effect copy distinguishes "detach" from "release" and "complete task" from "stop attempt".
 - Unknown/stale/unreachable states include timestamp, reason, and safe next action where supplied.
 
 ### Accepted Debt

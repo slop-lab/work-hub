@@ -13,7 +13,19 @@ export class RequestRecords {
     const id = newId('request');
     const now = this.clock.now().toISOString();
     const expiry = 'expiresAt' in input.validity && typeof input.validity.expiresAt === 'string' ? input.validity.expiresAt : null;
-    this.database.prepare(`INSERT INTO requests(id,workspace_id,project_id,task_id,session_id,attempt_id,binding_generation,revision,kind,author_id,recipient_json,prompt,reason,reference_ids_json,answer_schema_json,blocking,validity_json,status,response_route,expires_at,supersedes_request_id,action_description_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?)`).run(id, input.workspaceId, input.projectId, input.taskId ?? null, input.sessionId ?? null, input.attemptId ?? null, input.bindingGeneration ?? null, input.kind, input.authorId, JSON.stringify(input.recipient), input.prompt, input.reason ?? null, JSON.stringify(input.referenceIds), JSON.stringify(input.answerSchema), input.blocking, JSON.stringify(input.validity), input.responseRoute, expiry, input.supersedesRequestId ?? null, input.actionDescription ? JSON.stringify(input.actionDescription) : null, now, now);
+    this.database.prepare(`INSERT INTO requests(
+      id,workspace_id,project_id,task_id,session_id,attempt_id,binding_generation,revision,kind,
+      author_id,recipient_json,prompt,reason,reference_ids_json,answer_schema_json,blocking,
+      validity_json,status,response_route,expires_at,supersedes_request_id,
+      action_description_json,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?)`).run(
+      id, input.workspaceId, input.projectId, input.taskId ?? null, input.sessionId ?? null,
+      input.attemptId ?? null, input.bindingGeneration ?? null, input.kind, input.authorId,
+      JSON.stringify(input.recipient), input.prompt, input.reason ?? null,
+      JSON.stringify(input.referenceIds), JSON.stringify(input.answerSchema), input.blocking,
+      JSON.stringify(input.validity), input.responseRoute, expiry, input.supersedesRequestId ?? null,
+      input.actionDescription ? JSON.stringify(input.actionDescription) : null, now, now,
+    );
     return this.getRequest(input.workspaceId, id);
   }
   getRequest(workspaceId: string, id: string): RequestView {
@@ -46,7 +58,16 @@ export class RequestRecords {
     return this.database.prepare(`SELECT id FROM requests WHERE workspace_id=? AND task_id=? AND blocking='before_delegate' AND status='open' ORDER BY id`).all(workspaceId, taskId).map((row) => z.object({ id: z.string() }).parse(row).id);
   }
   invalidateNativeRequest(input: { readonly workspaceId: string; readonly sessionId: string; readonly bindingGeneration: number; readonly installationId: string; readonly providerScope: string; readonly kind: string; readonly nativeId: string; readonly reason: string }): void {
-    const ids = this.database.prepare(`SELECT id FROM requests WHERE workspace_id=? AND session_id=? AND binding_generation=? AND status IN ('open','answered') AND json_extract(validity_json,'$.nativeRequestRef.installationId')=? AND json_extract(validity_json,'$.nativeRequestRef.providerScope')=? AND json_extract(validity_json,'$.nativeRequestRef.kind')=? AND json_extract(validity_json,'$.nativeRequestRef.id')=?`).all(input.workspaceId, input.sessionId, input.bindingGeneration, input.installationId, input.providerScope, input.kind, input.nativeId).map((row) => z.object({ id: z.string() }).parse(row).id);
+    const ids = this.database.prepare(`SELECT id FROM requests
+      WHERE workspace_id=? AND session_id=? AND binding_generation=?
+        AND status IN ('open','answered')
+        AND json_extract(validity_json,'$.nativeRequestRef.installationId')=?
+        AND json_extract(validity_json,'$.nativeRequestRef.providerScope')=?
+        AND json_extract(validity_json,'$.nativeRequestRef.kind')=?
+        AND json_extract(validity_json,'$.nativeRequestRef.id')=?`).all(
+      input.workspaceId, input.sessionId, input.bindingGeneration, input.installationId,
+      input.providerScope, input.kind, input.nativeId,
+    ).map((row) => z.object({ id: z.string() }).parse(row).id);
     for (const id of ids) this.changeStatus(input.workspaceId, id, 'superseded');
   }
 }

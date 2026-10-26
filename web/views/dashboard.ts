@@ -107,7 +107,8 @@ function projectQuestionComposer(ctx: UiContext): HTMLElement {
 		if (text.length === 0) return;
 		const projectId = findFormValue(form, "project");
 		const recipientValue = findFormValue(form, "recipient");
-		void ctx.command({ commandId: commandId(), type: "request.create", payload: { kind: "question", projectId, recipient: recipientValue.startsWith("user:") ? { kind: "user", userId: recipientValue.slice("user:".length) } : { kind: "project_members", projectId }, prompt: text, reason: findFormValue(form, "reason") || undefined, referenceIds: [], answerSchema: { kind: "text", minLength: 1, maxLength: 8_000 }, blocking: "none", validity: { kind: "project", projectId }, responseRoute: "none" } }, "Project question saved without starting work.").then((saved) => {
+		void ctx.command({ commandId: commandId(), type: "request.create", payload: { kind: "question", projectId,
+			recipient: recipientValue.startsWith("user:") ? { kind: "user", userId: recipientValue.slice("user:".length) } : { kind: "project_members", projectId }, prompt: text, reason: findFormValue(form, "reason") || undefined, referenceIds: [], answerSchema: { kind: "text", minLength: 1, maxLength: 8_000 }, blocking: "none", validity: { kind: "project", projectId }, responseRoute: "none" } }, "Project question saved without starting work.").then((saved) => {
 			if (saved) { prompt.value = ""; reason.value = ""; }
 		});
 	});
