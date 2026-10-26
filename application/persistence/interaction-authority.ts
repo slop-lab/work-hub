@@ -46,7 +46,16 @@ export class InteractionAuthority {
     const validity = RequestValiditySchema.parse(request.validity);
     if (validity.expiresAt && Date.parse(validity.expiresAt) <= this.clock.now().getTime()) return false;
     if (validity.kind !== 'attempt') return true;
-    const raw = this.database.prepare(`SELECT a.profile_revision AS profileRevision,b.descriptor_json AS descriptorJson,s.binding_generation AS generation FROM attempts a JOIN sessions s ON s.id=a.session_id JOIN runtime_bindings b ON b.session_id=s.id WHERE a.workspace_id=? AND a.id=? AND a.session_id=? AND a.task_id=? AND a.unresolved=1 AND s.lifecycle='open' AND s.binding_generation=? AND b.generation=s.binding_generation`).get(request.workspaceId, validity.target.hubAttemptId, validity.target.hubSessionId, request.taskId ?? '', validity.target.bindingGeneration);
+    const raw = this.database.prepare(`SELECT a.profile_revision AS profileRevision,
+      b.descriptor_json AS descriptorJson,s.binding_generation AS generation
+      FROM attempts a JOIN sessions s ON s.id=a.session_id
+      JOIN runtime_bindings b ON b.session_id=s.id
+      WHERE a.workspace_id=? AND a.id=? AND a.session_id=? AND a.task_id=?
+        AND a.unresolved=1 AND s.lifecycle='open' AND s.binding_generation=?
+        AND b.generation=s.binding_generation`).get(
+      request.workspaceId, validity.target.hubAttemptId, validity.target.hubSessionId,
+      request.taskId ?? '', validity.target.bindingGeneration,
+    );
     if (!raw) return false;
     const row = z.object({ profileRevision: z.number(), descriptorJson: z.string(), generation: z.number() }).parse(raw);
     const descriptor = RuntimeBindingDescriptorSchema.parse(parseJson(row.descriptorJson));

@@ -44,7 +44,14 @@ export class QueryRepository {
       answer_digest AS answerDigest, committed_at AS committedAt FROM responses
       WHERE workspace_id = ? ORDER BY committed_at, id`).all(workspaceId));
   }
-  responsesForRequests(workspaceId: string, requestIds: readonly string[]) { if (requestIds.length === 0) return []; return safeRows(this.database.prepare(`SELECT id, request_id AS requestId, request_revision AS requestRevision, author_id AS authorId, answer_json AS answerJson, answer_digest AS answerDigest, committed_at AS committedAt FROM responses WHERE workspace_id=? AND request_id IN (${requestIds.map(() => '?').join(',')}) ORDER BY committed_at,id LIMIT 200`).all(workspaceId, ...requestIds)); }
+  responsesForRequests(workspaceId: string, requestIds: readonly string[]) {
+    if (requestIds.length === 0) return [];
+    return safeRows(this.database.prepare(`SELECT id, request_id AS requestId,
+      request_revision AS requestRevision, author_id AS authorId, answer_json AS answerJson,
+      answer_digest AS answerDigest, committed_at AS committedAt FROM responses
+      WHERE workspace_id=? AND request_id IN (${requestIds.map(() => '?').join(',')})
+      ORDER BY committed_at,id LIMIT 200`).all(workspaceId, ...requestIds));
+  }
 
   references(workspaceId: string): readonly Readonly<Record<string, unknown>>[] {
     return safeRows(this.database.prepare(`SELECT id, task_id AS taskId, kind, title,
@@ -53,7 +60,15 @@ export class QueryRepository {
       content_revision AS contentRevision, created_at AS createdAt, updated_at AS updatedAt
       FROM references_store WHERE workspace_id = ? ORDER BY updated_at DESC, id`).all(workspaceId));
   }
-  referencesForTask(workspaceId: string, taskId: string) { return safeRows(this.database.prepare(`SELECT id, task_id AS taskId, kind, title, mime_type AS mimeType, provenance_json AS provenanceJson, availability, retained_text AS retainedText, CASE WHEN kind='link' THEN json_extract(locator_json,'$.url') ELSE NULL END AS url, content_revision AS contentRevision, created_at AS createdAt, updated_at AS updatedAt FROM references_store WHERE workspace_id=? AND task_id=? ORDER BY updated_at DESC,id LIMIT 100`).all(workspaceId, taskId)); }
+  referencesForTask(workspaceId: string, taskId: string) {
+    return safeRows(this.database.prepare(`SELECT id, task_id AS taskId, kind, title,
+      mime_type AS mimeType, provenance_json AS provenanceJson, availability,
+      retained_text AS retainedText,
+      CASE WHEN kind='link' THEN json_extract(locator_json,'$.url') ELSE NULL END AS url,
+      content_revision AS contentRevision, created_at AS createdAt, updated_at AS updatedAt
+      FROM references_store WHERE workspace_id=? AND task_id=?
+      ORDER BY updated_at DESC,id LIMIT 100`).all(workspaceId, taskId));
+  }
 
   output(workspaceId: string): readonly Readonly<Record<string, unknown>>[] {
     const rows = safeRows(this.database.prepare(`SELECT id, session_id AS sessionId,
@@ -61,7 +76,18 @@ export class QueryRepository {
       binding_generation AS bindingGeneration, item_json AS itemJson, created_at AS createdAt
       FROM (SELECT * FROM output_chunks WHERE workspace_id = ? ORDER BY created_at DESC,local_sequence DESC LIMIT 1000) ORDER BY session_id, local_sequence`).all(workspaceId));
     const bounds = this.database.prepare('SELECT c.session_id AS sessionId,COUNT(*) AS count,MAX(c.created_at) AS observedAt,s.binding_generation AS generation FROM output_chunks c JOIN sessions s ON s.id=c.session_id AND s.workspace_id=c.workspace_id WHERE c.workspace_id=? GROUP BY c.session_id').all(workspaceId).map((row) => z.object({ sessionId: z.string(), count: z.number(), observedAt: z.string(), generation: z.number() }).parse(row));
-    const gaps = bounds.filter((bound) => rows.filter((row) => row['sessionId'] === bound.sessionId).length < bound.count).map((bound) => ({ id: `snapshot-gap:${bound.sessionId}`, sessionId: bound.sessionId, attemptId: null, localSequence: 0, sourceItemId: null, bindingGeneration: bound.generation, itemJson: JSON.stringify({ kind: 'gap', role: 'runtime', text: 'The workspace snapshot contains only a bounded output tail. Open paginated session history to read the other retained chunks.', observedAt: bound.observedAt }), createdAt: bound.observedAt }));
+    const gaps = bounds
+      .filter((bound) => rows.filter((row) => row['sessionId'] === bound.sessionId).length < bound.count)
+      .map((bound) => ({
+        id: `snapshot-gap:${bound.sessionId}`, sessionId: bound.sessionId, attemptId: null,
+        localSequence: 0, sourceItemId: null, bindingGeneration: bound.generation,
+        itemJson: JSON.stringify({
+          kind: 'gap', role: 'runtime',
+          text: 'The workspace snapshot contains only a bounded output tail. Open paginated session history to read the other retained chunks.',
+          observedAt: bound.observedAt,
+        }),
+        createdAt: bound.observedAt,
+      }));
     return [...gaps, ...rows];
   }
 
@@ -92,7 +118,15 @@ export class QueryRepository {
       OR EXISTS (SELECT 1 FROM environment_registrations r JOIN json_each(r.allowed_project_ids_json) p WHERE r.workspace_id=o.workspace_id AND r.id=o.target_id AND p.value IN (SELECT value FROM json_each(?))))`)
       .get(actor.workspaceId, id, JSON.stringify(actor.projectIds), JSON.stringify(actor.projectIds), JSON.stringify(actor.projectIds), JSON.stringify(actor.projectIds), JSON.stringify(actor.bindingIds), JSON.stringify(actor.projectIds)) !== undefined;
   }
-  operationalIssues(workspaceId: string, limit: number) { return safeRows(this.database.prepare(`SELECT id,command_id AS commandId,connector_kind AS connectorKind,installation_id AS installationId,operation_kind AS operationKind,stage,target_id AS targetId,target_generation AS targetGeneration,input_digest AS inputDigest,status,receipt_json AS receiptJson,updated_at AS updatedAt FROM external_operations WHERE workspace_id=? AND status IN ('unknown','failed','rejected') ORDER BY updated_at DESC,id LIMIT ?`).all(workspaceId, limit)); }
+  operationalIssues(workspaceId: string, limit: number) {
+    return safeRows(this.database.prepare(`SELECT id,command_id AS commandId,
+      connector_kind AS connectorKind,installation_id AS installationId,
+      operation_kind AS operationKind,stage,target_id AS targetId,
+      target_generation AS targetGeneration,input_digest AS inputDigest,status,
+      receipt_json AS receiptJson,updated_at AS updatedAt FROM external_operations
+      WHERE workspace_id=? AND status IN ('unknown','failed','rejected')
+      ORDER BY updated_at DESC,id LIMIT ?`).all(workspaceId, limit));
+  }
 
   deliveries(workspaceId: string): readonly Readonly<Record<string, unknown>>[] {
     return safeRows(this.database.prepare(`SELECT id, request_id AS requestId,
@@ -101,7 +135,14 @@ export class QueryRepository {
       last_error_json AS lastErrorJson, created_at AS createdAt, updated_at AS updatedAt
       FROM deliveries WHERE workspace_id = ? ORDER BY updated_at DESC, id`).all(workspaceId));
   }
-  deliveryProblems(workspaceId: string, limit: number) { return safeRows(this.database.prepare(`SELECT id,request_id AS requestId,response_id AS responseId,destination_generation AS destinationGeneration,operation_id AS operationId,status,evidence_json AS evidenceJson,last_error_json AS lastErrorJson,created_at AS createdAt,updated_at AS updatedAt FROM deliveries WHERE workspace_id=? AND status IN ('unknown','rejected','suppressed') ORDER BY updated_at DESC,id LIMIT ?`).all(workspaceId, limit)); }
+  deliveryProblems(workspaceId: string, limit: number) {
+    return safeRows(this.database.prepare(`SELECT id,request_id AS requestId,
+      response_id AS responseId,destination_generation AS destinationGeneration,
+      operation_id AS operationId,status,evidence_json AS evidenceJson,
+      last_error_json AS lastErrorJson,created_at AS createdAt,updated_at AS updatedAt
+      FROM deliveries WHERE workspace_id=? AND status IN ('unknown','rejected','suppressed')
+      ORDER BY updated_at DESC,id LIMIT ?`).all(workspaceId, limit));
+  }
 
   watermark(workspaceId: string): string {
     const row = z.strictObject({ sequence: z.number() }).parse(
