@@ -68,13 +68,18 @@ export function sessionControls(ctx: UiContext, session: HubSession, attempt?: H
 
 function continueSession(ctx: UiContext, session: HubSession): Promise<boolean> {
 	const task = ctx.state.tasks.find((item) => item.id === session.taskId);
+	const profile = ctx.state.profiles.find((item) => item.id === session.profileId);
+	if (!profile) {
+		ctx.notice('The bound execution profile is unavailable. Refresh before continuing this session.', 'warning');
+		return Promise.resolve(false);
+	}
 	return ctx.command(
 		{
 			commandId: commandId(),
 			type: "session.continue",
 			target: { kind: "session", id: session.id },
-			expected: { session: session.revision, bindingGeneration: session.bindingGeneration, ...(task === undefined ? {} : { task: task.revision }) },
-			payload: { profileId: session.profileId ?? "profile-structured", context: "current_task", environmentReuse: "reuse", instruction: "Continue with the current task brief and report a new result." },
+			expected: { session: session.revision, profile: profile.revision, bindingGeneration: session.bindingGeneration, ...(task === undefined ? {} : { task: task.revision }) },
+			payload: { profileId: profile.id, context: "current_task", environmentReuse: "reuse", instruction: "Continue with the current task brief and report a new result." },
 		},
 		"Continuation accepted as a new attempt.",
 	);

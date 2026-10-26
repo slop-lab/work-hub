@@ -5,6 +5,7 @@ import { instructionComposer, sessionControls } from "./session-controls.ts";
 import { emptySession } from "./session-empty.ts";
 import { simulatorPanel } from "./simulator-panel.ts";
 import { sessionOutput } from "./session-output.ts";
+import { loadNativeLink } from '../integrations.ts';
 
 export function sessionView(ctx: UiContext, sessionId?: string): HTMLElement {
 	const session = sessionId === undefined ? ctx.state.sessions[0] : ctx.state.sessions.find((item) => item.id === sessionId);
@@ -60,6 +61,12 @@ export function sessionView(ctx: UiContext, sessionId?: string): HTMLElement {
 				{ class: "cluster" },
 				task === undefined ? null : el("a", { class: "button button--secondary", href: `#/backlog/${task.id}` }, "Open task"),
 				button("Refresh", "quiet", () => void ctx.refresh()),
+				ctx.state.simulator ? null : button('Open native OpenCode', 'secondary', () => {
+					void loadNativeLink(session.id).then((url) => {
+						if (url) window.open(url, '_blank', 'noopener,noreferrer');
+						else ctx.notice('No native URL configured. Ask the operator for the authenticated OpenCode route.', 'warning');
+					}).catch(() => ctx.notice('Native link unavailable. Check the scoped runtime connection.', 'error'));
+				}),
 			),
 		),
 		el(
