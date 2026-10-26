@@ -9,6 +9,7 @@ artifacts:
       - "**/*.sqlite-shm"
       - "**/*.sqlite-wal"
       - .codegraph/**
+      - .deps/blocks/**
       - .omo/**
       - .playwright-mcp/**
       - .screenshots/**

@@ -39,6 +39,15 @@ and `data/` runtime state. Built-in registrations already cover npm lockfiles an
 source maps. Product code, tests, repository configuration and shipped documents
 are not excluded. No source rule is disabled or given a higher threshold.
 
+The combined live-integration candidate additionally registers only
+`.deps/blocks/**` in the shared downloaded-artifact bucket. This is the ignored,
+untracked external Git checkout at exact source pin
+`df6f800828cd58acd2af65c32e7341609601be89`, not Work Hub product source or tracked
+vendoring. Blocks remains owned and checked by its own repository/AKB adapter;
+Work Hub does not rewrite its source to satisfy unrelated document policies.
+No broad `.deps/**` exclusion, source suppression, rule severity change or
+threshold increase is introduced. Git-integrity policies remain active.
+
 Local `.env` files and SQLite database/WAL/shared-memory files are also classified
 to mirror their existing Git-ignore privacy boundary, even outside `data/`.
 This prevents content rules from reading private runtime state during a full
