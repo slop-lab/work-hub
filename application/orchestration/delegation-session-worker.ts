@@ -38,7 +38,7 @@ export class DelegationSessionWorker {
       configuration: profile.configuration, requestedControl: "control",
       ...(payload.delegation.precreatedNativeSession ? { mode: 'attach', nativeSession: payload.delegation.precreatedNativeSession, sessionLaunchOwner: 'execution_provider' } : { mode: 'create', sessionLaunchOwner: 'runtime_connector' }) });
     const receipt = await this.input.connectors.runtime(item.installationId)
-      .openSession(actionContext(item), open);
+      .openSession(actionContext(item, [payload.attachment.useGrant.id]), open);
     if (receipt.status === "rejected" || receipt.status === "failed") {
       this.input.operations.settleTerminal(item.id, receipt.status, receipt, () => {
         this.enqueueAttachmentCleanup(item, payload.delegation, payload.attachment);
