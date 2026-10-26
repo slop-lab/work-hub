@@ -69,8 +69,11 @@ headers and a JSON body that never ends. Before the fix it remained pending afte
 An oversized synthetic stream whose `cancel()` never settles previously hung;
 it now reports the unchanged 2 MiB limit promptly and releases its reader lock.
 Caller cancellation after headers also settles promptly, hides its private reason
-and sends the mutation only once. All three transport regressions and the existing
-OpenCode conformance tests passed together. Final combined source and relevant
+and sends the mutation only once. A fourth regression ensures a successful HTTP
+204 does not abort native work, retain caller cancellation, or retain its deadline
+timer. The actual native question/answer/result flow passed after that correction.
+All four transport regressions and the existing OpenCode conformance tests passed
+together. Final combined source and relevant
 actual-service/browser verification are reported with the final candidate SHA.
 
 ## Persistent development record
