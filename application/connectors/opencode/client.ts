@@ -11,18 +11,23 @@ export class OpenCodeClient {
 
   async request(ctx: CallContext, path: string, body?: unknown): Promise<unknown> {
     const controller = new AbortController();
-    const deadline = AbortSignal.timeout(10_000);
-    const signal = AbortSignal.any([controller.signal, deadline, ...(ctx.signal === undefined ? [] : [ctx.signal])]);
+    const signal = controller.signal;
+    let deadlineExpired = false;
+    const timer = setTimeout(() => { deadlineExpired = true; controller.abort(); }, 10_000);
     const interrupted = new Promise<never>((_resolve, reject) => {
       const interrupt = () => reject(new HubError({
-        code: deadline.aborted ? 'opencode_timeout' : 'opencode_cancelled', category: 'unavailable',
-        message: deadline.aborted ? 'OpenCode exceeded its request/read deadline. Reconcile uncertain input before resending.' :
+        code: deadlineExpired ? 'opencode_timeout' : 'opencode_cancelled', category: 'unavailable',
+        message: deadlineExpired ? 'OpenCode exceeded its request/read deadline. Reconcile uncertain input before resending.' :
           'OpenCode request was cancelled. External work may continue; reconcile uncertain input before resending.',
         retry: body === undefined ? 'read_only_retry' : 'reconcile_first',
       }));
       if (signal.aborted) interrupt();
       else signal.addEventListener('abort', interrupt, { once: true });
     });
+    const cancel = () => controller.abort();
+    ctx.signal?.addEventListener('abort', cancel, { once: true });
+    if (ctx.signal?.aborted) cancel();
+    let completed = false;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const releaseBody = () => {
       const current = reader;
@@ -33,7 +38,8 @@ export class OpenCodeClient {
       }
     };
     try {
-      return await Promise.race([(async () => {
+      if (signal.aborted) return await interrupted;
+      const result = await Promise.race([(async () => {
         signal.throwIfAborted();
         const url = new URL(path, this.connection.origin);
         url.searchParams.set('directory', this.connection.directory);
@@ -65,6 +71,8 @@ export class OpenCodeClient {
         }
         return JSON.parse(Buffer.concat(chunks).toString('utf8'));
       })(), interrupted]);
+      completed = true;
+      return result;
     } catch (error) {
       if (error instanceof HubError) throw error;
       if (error instanceof HTTPError) {
@@ -83,7 +91,9 @@ export class OpenCodeClient {
       });
       throw error;
     } finally {
-      controller.abort();
+      clearTimeout(timer);
+      ctx.signal?.removeEventListener('abort', cancel);
+      if (!completed) controller.abort();
       releaseBody();
     }
   }

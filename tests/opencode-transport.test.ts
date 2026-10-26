@@ -90,3 +90,22 @@ test('an oversized body fails without awaiting a stalled stream cancellation', a
   assert.equal(cancelled, true);
   assert.equal(stream.locked, false);
 });
+
+test('successful async acceptance does not abort native work or retain a caller cancellation link', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let transportSignal: AbortSignal | undefined;
+  t.mock.method(globalThis, 'fetch', async (request: RequestInfo | URL) => {
+    assert.ok(request instanceof Request);
+    transportSignal = request.signal;
+    return new Response(null, { status: 204 });
+  });
+  const caller = new AbortController();
+  const client = new OpenCodeClient({ installationId: 'disposable', label: 'Accepted async fixture',
+    origin: 'http://127.0.0.1', directory: '/fixture', authorization: 'Bearer fixture-only' });
+  assert.equal(await client.request({ ...context, signal: caller.signal }, '/prompt_async', { instruction: 'fixture-only' }), null);
+  assert.ok(transportSignal);
+  assert.equal(transportSignal.aborted, false);
+  caller.abort();
+  t.mock.timers.tick(10_001);
+  assert.equal(transportSignal.aborted, false);
+});
