@@ -12,6 +12,7 @@ import { sessionView } from "./views/session.ts";
 import { operationView } from "./views/operation.ts";
 import { settingsView } from "./views/settings.ts";
 import { showcaseView } from "./views/showcase.ts";
+import { clearConnectionInventory } from './views/connections.ts';
 
 function requireRoot(): HTMLElement {
 	const value = document.querySelector<HTMLElement>("#app");
@@ -24,6 +25,7 @@ const root = requireRoot();
 let state: HubState | null = null;
 let refreshInFlight: Promise<void> | null = null;
 let submittedForm: HTMLFormElement | null = null;
+let renderedLocation: string | undefined;
 
 function navigate(route: string): void {
 	location.hash = route.replace(/^#/, "");
@@ -72,9 +74,12 @@ async function refresh(): Promise<void> {
 		const route = parseRoute();
 		const nextState = await loadState(route);
     const islands = state === null ? [] : captureDirtyForms(root, refreshIdentity(parseRoute(), state));
+    const scrollTop = renderedLocation === location.hash ? root.querySelector('main')?.scrollTop ?? 0 : 0;
     state = nextState;
 		render();
 		restoreDirtyForms(root, refreshIdentity(parseRoute(), state), islands);
+    const main = root.querySelector('main');
+    if (main) main.scrollTo({ top: scrollTop, behavior: 'instant' });
 	})();
 	refreshInFlight = pending;
 	try { await pending; } finally { if (refreshInFlight === pending) refreshInFlight = null; }
@@ -122,6 +127,7 @@ function contentFor(route: Route, ctx: UiContext): HTMLElement {
 
 function render(): void {
 	if (state === null) return;
+	renderedLocation = location.hash;
 	const route = parseRoute();
 	const retainedToasts = [...(root.querySelector<HTMLElement>(".toast-region")?.children ?? [])];
 	const ctx: UiContext = {
@@ -143,6 +149,7 @@ function render(): void {
 		appShell(state, route, contentFor(route, ctx), () => {
 			void logout().then(() => {
 				clearDirtyForms();
+				clearConnectionInventory();
 				for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
 					const key = sessionStorage.key(index);
 					if (key?.startsWith("workhub:draft:") === true) sessionStorage.removeItem(key);

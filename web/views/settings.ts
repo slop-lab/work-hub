@@ -1,6 +1,7 @@
 import { commandId } from "../api.ts";
 import { badge, button, el, findFormValue, label, submitButton } from "../dom.ts";
 import type { UiContext } from "../ui-context.ts";
+import { connectionsPanel } from './connections.ts';
 
 export function settingsView(ctx: UiContext): HTMLElement {
 	const users = el("div", { class: "settings-list" });
@@ -45,6 +46,7 @@ export function settingsView(ctx: UiContext): HTMLElement {
 		{ class: "page" },
 		el("header", { class: "page-heading" }, el("div", {}, el("p", { class: "kicker" }, "Administration"), el("h1", {}, "Access and execution profiles"), el("p", { class: "lead" }, "Administrative changes affect future commands. Historical snapshots remain unchanged."))),
 		ctx.state.me.role !== "admin" ? el("section", { class: "boundary-note" }, el("strong", {}, "Administrator access required"), el("p", {}, "You can view profiles and users but cannot modify them.")) : el("div", { class: "stack" }, userForm(ctx), projectForm(ctx)),
+		ctx.state.me.role === 'admin' ? connectionsPanel(ctx) : null,
 		el(
 			"div",
 			{ class: "settings-grid" },
