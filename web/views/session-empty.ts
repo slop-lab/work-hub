@@ -2,13 +2,25 @@ import { commandId, loadTasks } from "../api.ts";
 import type { HubTask } from "../state-schema.ts";
 import { el, findFormValue, label, submitButton } from "../dom.ts";
 import type { UiContext } from "../ui-context.ts";
+import { NativeRefSchema } from '../../application/contracts/common.ts';
 
 export function emptySession(ctx: UiContext): HTMLElement {
 	const task = el("select", { class: "select", name: "task" });
 	let availableTasks: readonly HubTask[] = [];
 	const profile = el("select", { class: "select", name: "profile" });
-	for (const item of ctx.state.profiles.filter((candidate) => candidate.enabled)) profile.append(el("option", { value: item.id }, item.label));
+	for (const item of ctx.state.profiles.filter((candidate) => candidate.enabled && ctx.state.installations.some((installation) => installation.id === candidate.runtimeInstallationId && installation.available && installation.enabled))) profile.append(el("option", { value: item.id }, item.label));
 	const nativeSession = el("input", { class: "input", name: "nativeSession", required: true, placeholder: "Native session ID" });
+	const externalReference = el('textarea', { class: 'textarea', name: 'externalReference', rows: '4' });
+	const externalField = label('Native session reference', externalReference, 'Paste the exact JSON reference from saved connection discovery. Names and session IDs alone do not identify an external installation.');
+	const syncReference = () => {
+		const external = ctx.state.profiles.find((item) => item.id === profile.value)?.simulator === false;
+		nativeSession.required = !external;
+		nativeSession.disabled = external;
+		externalField.hidden = !external;
+		externalReference.required = external;
+	};
+	profile.addEventListener('change', syncReference);
+	syncReference();
 	const control = el("select", { class: "select", name: "controlMode" }, el("option", { value: "observe" }, "Observe only"), el("option", { value: "control" }, "Request control"));
 	const form = el(
 		"form",
@@ -18,6 +30,7 @@ export function emptySession(ctx: UiContext): HTMLElement {
 		label("Task context", task),
 		label("Runtime profile", profile),
 		label("Native session ID", nativeSession),
+		externalField,
 		label("Requested access", control),
 		submitButton("Attach without starting work"),
 	);
@@ -28,13 +41,26 @@ export function emptySession(ctx: UiContext): HTMLElement {
 		const selectedTask = availableTasks.find((item) => item.id === taskId);
 		const selectedProfile = ctx.state.profiles.find((item) => item.id === profileId);
 		if (selectedTask === undefined || selectedProfile === undefined) return;
+		let reference = { installationId: selectedProfile.runtimeInstallationId, providerScope: 'workspace', kind: 'agent-session', id: findFormValue(form, 'nativeSession') };
+		if (!selectedProfile.simulator) {
+			try {
+				const parsed = NativeRefSchema.safeParse(JSON.parse(externalReference.value));
+				if (!parsed.success || parsed.data.installationId !== selectedProfile.runtimeInstallationId) {
+					ctx.notice('Select the exact native reference for this runtime installation.', 'error'); return;
+				}
+				reference = parsed.data;
+			} catch (error) {
+				if (!(error instanceof SyntaxError)) throw error;
+				ctx.notice('Native session reference must be valid JSON from discovery.', 'error'); return;
+			}
+		}
 		void ctx.command(
 			{
 				commandId: commandId(),
 				type: "session.attach",
 				target: { kind: "task", id: taskId },
 				expected: { task: selectedTask.revision, profile: selectedProfile.revision },
-				payload: { profileId, controlMode: findFormValue(form, "controlMode"), nativeSession: { installationId: selectedProfile.runtimeInstallationId, providerScope: "workspace", kind: "agent-session", id: findFormValue(form, "nativeSession") }, environment: { mode: "none" } },
+				payload: { profileId, controlMode: findFormValue(form, "controlMode"), nativeSession: reference, environment: { mode: "none" } },
 			},
 			"Native session attached without submitting work.",
 		);

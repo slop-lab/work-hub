@@ -6,6 +6,7 @@ export type { HubAttempt, HubRequest, HubSession, HubTask } from "./schema-work.
 const workAreaSchema = z.object({
 	key: id,
 	path: z.string(),
+	pathNamespace: z.string().default('provider-guest-posix'),
 	requestedAccess: z.enum(["read", "write"]),
 });
 const actionSchema = z.array(z.string());

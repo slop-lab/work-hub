@@ -99,7 +99,7 @@ export function answerDialog(ctx: UiContext, request: HubRequest): void {
 }
 
 export function delegationDialog(ctx: UiContext, task: HubTask): void {
-	const availableProfiles = ctx.state.profiles.filter((profile) => profile.enabled);
+	const availableProfiles = ctx.state.profiles.filter((profile) => profile.enabled && ctx.state.installations.some((installation) => installation.id === profile.runtimeInstallationId && installation.enabled && installation.available));
 	const profileSelect = el("select", { class: "select", name: "profile" });
 	const project = ctx.state.projects.find((item) => item.id === task.projectId);
 	const configuredDefaultProfileId = project?.defaultProfileId;
@@ -124,12 +124,19 @@ export function delegationDialog(ctx: UiContext, task: HubTask): void {
 	const externalProfileField = label("External environment profile", externalProfile);
 	const releasePolicyField = label("Release policy reference", releasePolicy);
 	const syncEnvironmentFields = (): void => {
+		const selected = availableProfiles.find((profile) => profile.id === profileSelect.value);
+		for (const option of modeSelect.options) {
+			option.disabled = selected === undefined || !selected.allowedEnvironmentModes.some((mode) => mode === option.value);
+			option.hidden = option.disabled;
+		}
+		if (modeSelect.selectedOptions[0]?.disabled) modeSelect.value = '';
 		registrationField.hidden = modeSelect.value !== "existing";
 		executionField.hidden = modeSelect.value !== "provision";
 		externalProfileField.hidden = modeSelect.value !== "provision";
 		releasePolicyField.hidden = modeSelect.value !== "provision";
 	};
 	modeSelect.addEventListener("change", syncEnvironmentFields);
+	profileSelect.addEventListener('change', syncEnvironmentFields);
 	const references = ctx.state.references.filter((item) => item.taskId === task.id);
 	const responses = ctx.state.requests.filter((request) => request.taskId === task.id).flatMap((request) => ctx.state.responses.filter((response) => response.requestId === request.id).map((response) => ({ response, request })));
 	const selections = el("div", { class: "stack" }, el("strong", {}, "Selected context"), references.length === 0 ? el("p", { class: "muted" }, "No task references are available.") : el("div", { class: "selection-list" }, ...references.map((item) => checkbox(`Include reference ${item.title}`, "referenceId", item.id))), responses.length === 0 ? el("p", { class: "muted" }, "No saved answers are available.") : el("div", { class: "selection-list" }, ...responses.map(({ response, request }) => checkbox(`Include answer to ${request.prompt}`, "responseId", response.id))));
@@ -223,10 +230,10 @@ function existingSelection(ctx: UiContext, registrationId: string): Readonly<Rec
 		mode: "existing",
 		registrationId,
 		expectedRegistrationRevision: registration.revision,
-		requestedAccess: "write",
+		requestedAccess: registration.workAreas.some((area) => area.requestedAccess === 'write') ? 'write' : 'read',
 		workAreas: registration.workAreas.map((area) => ({
 			...area,
-			pathNamespace: "provider-guest-posix",
+			pathNamespace: area.pathNamespace,
 			preparation: "preserve_existing",
 		})),
 	};
