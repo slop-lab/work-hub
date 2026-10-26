@@ -53,7 +53,8 @@ export type TaskQuery = { readonly q?: string; readonly projectId?: string; read
 
 export async function loadTasks(query: TaskQuery): Promise<TaskPage> {
 	try {
-		const searchParams: Record<string, string> = { limit: String(query.limit ?? 50), ...(query.q === undefined || query.q.length === 0 ? {} : { q: query.q }), ...(query.projectId === undefined ? {} : { projectId: query.projectId }), ...(query.status === undefined ? {} : { status: query.status }), ...(query.ownerId === undefined ? {} : { ownerId: query.ownerId }), ...(query.priority === undefined ? {} : { priority: String(query.priority) }), ...(query.after === undefined ? {} : { after: query.after }) };
+		const searchParams: Record<string, string> = { limit: String(query.limit ?? 50), ...(query.q === undefined || query.q.length === 0 ? {} : { q: query.q }), ...(query.projectId === undefined ? {} : { projectId: query.projectId }),
+			...(query.status === undefined ? {} : { status: query.status }), ...(query.ownerId === undefined ? {} : { ownerId: query.ownerId }), ...(query.priority === undefined ? {} : { priority: String(query.priority) }), ...(query.after === undefined ? {} : { after: query.after }) };
 		return taskPageSchema.parse(await client.get("tasks", { searchParams }).json());
 	} catch (error) {
 		if (error instanceof HTTPError) throw new ApiError(error.response.status, await safeJson(error));

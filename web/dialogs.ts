@@ -132,7 +132,9 @@ export function delegationDialog(ctx: UiContext, task: HubTask): void {
 	modeSelect.addEventListener("change", syncEnvironmentFields);
 	const references = ctx.state.references.filter((item) => item.taskId === task.id);
 	const responses = ctx.state.requests.filter((request) => request.taskId === task.id).flatMap((request) => ctx.state.responses.filter((response) => response.requestId === request.id).map((response) => ({ response, request })));
-	const selections = el("div", { class: "stack" }, el("strong", {}, "Selected context"), references.length === 0 ? el("p", { class: "muted" }, "No task references are available.") : el("div", { class: "selection-list" }, ...references.map((item) => checkbox(`Include reference ${item.title}`, "referenceId", item.id))), responses.length === 0 ? el("p", { class: "muted" }, "No saved answers are available.") : el("div", { class: "selection-list" }, ...responses.map(({ response, request }) => checkbox(`Include answer to ${request.prompt}`, "responseId", response.id))));
+	const selections = el("div", { class: "stack" }, el("strong", {}, "Selected context"),
+		references.length === 0 ? el("p", { class: "muted" }, "No task references are available.") : el("div", { class: "selection-list" }, ...references.map((item) => checkbox(`Include reference ${item.title}`, "referenceId", item.id))),
+		responses.length === 0 ? el("p", { class: "muted" }, "No saved answers are available.") : el("div", { class: "selection-list" }, ...responses.map(({ response, request }) => checkbox(`Include answer to ${request.prompt}`, "responseId", response.id))));
 	const form = el(
 		"form",
 		{ class: "stack" },

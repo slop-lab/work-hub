@@ -94,7 +94,8 @@ const entrySchema = z.object({ id, taskId: id, authorId: id, kind: z.string(), t
 const answerValueSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("text"), text: z.string() }), z.object({ kind: z.literal("single_choice"), optionId: z.string() }), z.object({ kind: z.literal("approval"), decision: z.enum(["approve", "deny"]), note: z.string().optional() })]);
 const responseSchema = z.object({ id, requestId: id, requestRevision: z.number().int(), authorId: id, answer: answerValueSchema, digest: z.string(), committedAt: timestamp });
 const viewStateSchema = z.object({ attentionKey: z.string(), readAt: timestamp.nullable().optional(), dismissedAt: timestamp.nullable().optional() });
-export const operationSchema = z.object({ id, commandId: id, connectorKind: z.enum(["execution", "runtime"]), installationId: id, operationKind: z.string(), providerOperationKind: z.string().optional(), stage: z.string(), targetId: id.optional(), targetGeneration: z.number().int().optional(), status: z.enum(["accepted", "running", "confirmed", "rejected", "failed", "unknown"]), updatedAt: timestamp, observedAt: timestamp, error: z.object({ code: z.string(), message: z.string(), retry: z.string() }).optional(), reconciliationHint: z.string().optional(), canReconcile: z.boolean() });
+export const operationSchema = z.object({ id, commandId: id, connectorKind: z.enum(["execution", "runtime"]), installationId: id, operationKind: z.string(), providerOperationKind: z.string().optional(), stage: z.string(), targetId: id.optional(), targetGeneration: z.number().int().optional(),
+	status: z.enum(["accepted", "running", "confirmed", "rejected", "failed", "unknown"]), updatedAt: timestamp, observedAt: timestamp, error: z.object({ code: z.string(), message: z.string(), retry: z.string() }).optional(), reconciliationHint: z.string().optional(), canReconcile: z.boolean() });
 
 export const hubStateSchema = z.object({
 	snapshotCursor: z.string(),
