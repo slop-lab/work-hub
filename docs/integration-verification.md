@@ -98,6 +98,32 @@ artifact registry, and two integration statements were wrapped without behavior
 changes. Final combined source/actual-service verification is reported with the
 combined candidate SHA in the handoff. No unrelated session/workspace was reset.
 
+## Required DIM CI snapshot followup
+
+The required DIM source job for `3d105ef43990332004e91dd7b4d504d18e43b2a6`
+failed with exit 2 in generation 869, ordinary-sysbox on sub1:
+
+- Review: `82eeb1580572a7b4c93542d29202a1de99c67c1f2d7d704dde8b0ca9b1401d83`.
+- Execution: `8d61f087-d46a-45b3-91c0-23a7207a7d30`.
+- Admission/publication were accepted and `cleanupComplete=true`.
+- QG's `git ls-files` failed because the authoritative source snapshot has no
+  `.git`; the earlier development-checkout PASS was not a required-CI PASS.
+
+The same failure was reproduced in a disposable metadata-free export. A second
+fixture also showed that borrowing parent Git metadata could falsely pass a
+local-only file. The source entrypoint now adapts snapshot membership using a
+disposable external index before installing dependencies, without changing QG
+rules or treating that index as history, approval or CI evidence.
+
+The disposable acceptance subsequently passed the full source gate and produced
+the browser build without persisting `.git`. Its ignored local-only violation
+was rejected with exit 1 by `git/no-tracked-local-files`; the file and unrelated
+parent index remained intact, and temporary metadata was cleaned on both paths.
+See [the snapshot contract and command](quality-gates.md#authoritative-metadata-free-dim-snapshots).
+Runtime connectors, model/agent choices, credentials, DIM authority and deployed
+services were not changed. Root must rerun required exact-commit DIM CI and human
+review for the new candidate; local reproduction is not a CI publication.
+
 ## Not verified / not claimed
 
 - LSP diagnostics could not run because TypeScript/Biome language servers are not

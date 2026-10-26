@@ -26,6 +26,39 @@ and runs `npm run quality` instead of running the source checks separately.
 The required-job and protected-reference policies are unchanged. Run the same
 entrypoint locally with `bash scripts/ci/source.bash`.
 
+### Authoritative metadata-free DIM snapshots
+
+DIM source CI supplies the exact reviewed source tree without `.git`. QG 0.1.0
+still needs `git ls-files` for its enabled `git/no-tracked-local-files` rule, even
+in full-scan mode. A development checkout alone does not exercise that contract.
+
+When the source root has no `.git` entry, the source entrypoint creates temporary
+Git metadata outside that tree and indexes **all supplied paths**, including
+ignored files, before `npm ci` creates derived dependencies. It then runs the same
+`npm run quality`, unchanged rules, strict checks and build. The temporary index
+represents authoritative snapshot membership only: it creates no commits,
+remotes, history, review evidence or CI authority. It is removed on success or
+failure, and no `.git` entry is written into the source tree. `TMPDIR` must be
+outside the source tree; an unsafe placement fails rather than hiding files.
+
+A real checkout or worktree with its own `.git` entry retains ordinary Git
+behavior and its existing index. A missing root entry never borrows an ancestor
+repository's membership. Existing broken Git metadata is not silently replaced.
+The QG package, rules, artifact registry, severities and thresholds are unchanged.
+
+Run the disposable full-source acceptance separately from the default Node suite:
+
+```sh
+node --test tests/source-snapshot.acceptance.ts
+```
+
+It executes the actual source entrypoint in a complete metadata-free snapshot,
+checks that the browser build was produced and temporary metadata was removed,
+then proves an ignored local-only source file is rejected by the unchanged Git
+rule even beneath an unrelated parent repository. It also verifies the parent
+index and supplied violating file are preserved. The acceptance has a distinct
+filename so its nested full source check cannot recursively invoke itself.
+
 Browser verification stays separate from that source job so CI does not depend
 on a browser runtime or change the workspace's server/session setup. Changes to
 browser-served code should also run the browser suite as described in the README.
