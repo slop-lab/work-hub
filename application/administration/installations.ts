@@ -21,7 +21,7 @@ export class InstallationRepository {
     return this.store.database.prepare('SELECT * FROM connector_installations WHERE workspace_id=? ORDER BY id').all(actor.workspaceId).map((raw) => {
       const row = rowSchema.parse(raw);
       const available = row.contract_major === 1 && this.connectorAvailable(row.kind, row.id);
-      return { id: row.id, label: row.label, revision: row.revision, kind: row.kind, contractMajor: row.contract_major, enabled: row.enabled === 1, available, simulator: row.implementation === 'simulator', reason: available ? 'simulated_only' : row.contract_major !== 1 ? 'contract_major_mismatch' : 'connector_not_installed' };
+      return { id: row.id, label: row.label, revision: row.revision, kind: row.kind, contractMajor: row.contract_major, enabled: row.enabled === 1, available, simulator: row.implementation === 'simulator', reason: available ? row.implementation === 'simulator' ? 'simulated_only' : 'configured_adapter_unverified' : row.contract_major !== 1 ? 'contract_major_mismatch' : 'connector_not_installed' };
     });
   }
   usable(actor: Actor, id: string): boolean { return this.list(actor).some((item) => item.id === id && item.available && item.enabled); }

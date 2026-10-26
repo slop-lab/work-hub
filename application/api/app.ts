@@ -16,12 +16,14 @@ import { presentHistory } from './history.ts';
 import { exportSafeRecords } from '../artifacts/export.ts';
 import { simulatorRoutes } from './simulator.ts';
 import { eventRoutes } from './events.ts';
+import type { ConfiguredConnections } from '../connectors/configured.ts';
 
 export type ApplicationOptions = {
   readonly hub: Hub;
   readonly auth: AuthStore;
   readonly origin: string;
   readonly secureCookies: boolean;
+  readonly connections?: ConfiguredConnections;
 };
 
 export function createApplication(options: ApplicationOptions) {
@@ -29,7 +31,7 @@ export function createApplication(options: ApplicationOptions) {
   const app = new Hono<ApiEnvironment>();
   app.use('*', securityHeaders());
   app.use('*', bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: { code: 'body_too_large', message: 'Command body exceeds 512 KiB.' } }, 413) }));
-  app.get('/health', (c) => c.json({ status: 'ok', contractMajor: 1, simulation: true, liveReady: false }));
+  app.get('/health', (c) => c.json({ status: 'ok', contractMajor: 1, simulation: hub.readiness.simulated, liveReady: false }));
   app.route('/api/v1', loginRoutes({ ...options, isUserEnabled: (id) => hub.actorForUser(id) !== undefined }));
   app.use('/api/*', authenticate({ auth, origin: options.origin }));
   const actor = (c: Context<ApiEnvironment>): Actor => {
@@ -39,15 +41,21 @@ export function createApplication(options: ApplicationOptions) {
     return user;
   };
   app.get('/api/v1/me', (c) => c.json(presentUser(actor(c), hub.administration)));
+  app.get('/api/v1/integrations', async (c) => c.json(options.connections === undefined ? { runtime: [], execution: [] } : await options.connections.discover(actor(c))));
+  app.get('/api/v1/sessions/:id/native-link', (c) => {
+    const current = actor(c);
+    hub.getSession(current, c.req.param('id'));
+    return c.json({ url: options.connections?.nativeLink(current, hub, c.req.param('id')) ?? null });
+  });
   app.get('/api/v1/state', (c) => {
     const current = actor(c);
-    return c.json(presentState({ snapshot: hub.snapshot(current), actor: current, administration: hub.administration }));
+    return c.json(presentState({ snapshot: hub.snapshot(current), actor: current, administration: hub.administration, simulated: hub.readiness.simulated }));
   });
   app.get('/api/v1/context', (c) => {
     const current = actor(c);
     const query = z.strictObject({ route: z.enum(['dashboard', 'backlog', 'task', 'session', 'environments', 'settings', 'operation', 'showcase']), id: z.string().optional() }).parse(c.req.query());
     const context = query.id === undefined ? { route: query.route } : { route: query.route, id: query.id };
-    return c.json(presentContext({ snapshot: hub.contextSnapshot(current, context), actor: current, administration: hub.administration }, context));
+    return c.json(presentContext({ snapshot: hub.contextSnapshot(current, context), actor: current, administration: hub.administration, simulated: hub.readiness.simulated }, context));
   });
   app.post('/api/v1/commands', async (c) => {
     const command = commandEnvelope.parse(await c.req.json<unknown>());
@@ -76,7 +84,7 @@ export function createApplication(options: ApplicationOptions) {
   app.get('/api/v1/export', (c) => {
     const current = actor(c);
     c.header('Content-Disposition', 'attachment; filename="work-hub-export.json"');
-    return c.body(JSON.stringify(exportSafeRecords({ contractVersion: 'work-hub-export.v1', workspaceId: current.workspaceId, exportedAt: new Date().toISOString(), simulated: true, records: hub.snapshot(current) })), 200, { 'Content-Type': 'application/json' });
+    return c.body(JSON.stringify(exportSafeRecords({ contractVersion: 'work-hub-export.v1', workspaceId: current.workspaceId, exportedAt: new Date().toISOString(), simulated: hub.readiness.simulated, records: hub.snapshot(current) })), 200, { 'Content-Type': 'application/json' });
   });
   app.get('/api/v1/commands/:id', (c) => {
     const receipt = hub.getCommandReceipt(actor(c), c.req.param('id'));

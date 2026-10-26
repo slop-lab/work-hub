@@ -8,13 +8,19 @@ import { AuthStore } from './auth-store.ts';
 import { createApplication } from './app.ts';
 import { loadConfig } from './config.ts';
 import { logger } from './logger.ts';
+import { ConfiguredConnections } from '../connectors/configured.ts';
 
 process.umask(0o077);
 const config = loadConfig();
 mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
-const hub = new Hub(join(config.dataDir, 'hub.sqlite'));
+const connectionFile = process.env['WORK_HUB_CONNECTIONS'];
+const connections = connectionFile === undefined ? undefined : new ConfiguredConnections(connectionFile, join(config.dataDir, 'connectors.sqlite'));
+const hub = new Hub(join(config.dataDir, 'hub.sqlite'), connections === undefined ? {} : {
+  mode: 'external', connectors: { runtime: connections.runtime, execution: connections.execution },
+});
 const auth = new AuthStore(join(config.dataDir, 'auth.sqlite'));
-const app = createApplication({ hub, auth, origin: config.origin, secureCookies: config.secureCookies });
+const app = createApplication({ hub, auth, origin: config.origin, secureCookies: config.secureCookies,
+  ...(connections === undefined ? {} : { connections }) });
 const webRoot = fileURLToPath(new URL('../../dist/web/', import.meta.url));
 app.get('/app.js', serveStatic({ root: webRoot }));
 app.get('/app.css', serveStatic({ root: webRoot }));
@@ -38,7 +44,7 @@ async function processWork(): Promise<void> {
 await processWork();
 const timer = setInterval(() => { void processWork(); }, config.workerIntervalMs);
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, () => {
-  logger.info({ host: config.host, port: config.port, simulation: true, liveReady: false }, 'service.listening');
+  logger.info({ host: config.host, port: config.port, simulation: hub.readiness.simulated, liveReady: false }, 'service.listening');
 });
 async function shutdown(): Promise<void> {
   if (stopping) return;
@@ -48,6 +54,7 @@ async function shutdown(): Promise<void> {
   await work;
   hub.close();
   auth.close();
+  connections?.close();
   logger.info('service.stopped_without_external_termination');
 }
 process.once('SIGINT', () => { void shutdown(); });

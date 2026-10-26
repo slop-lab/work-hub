@@ -18,6 +18,7 @@ export type PresentationInput = {
   readonly actor: Actor;
   readonly administration: Administration;
   readonly output?: readonly z.infer<typeof outputSchema>[];
+  readonly simulated?: boolean;
 };
 
 export function presentUser(actor: Actor, administration: Administration) {
@@ -27,7 +28,7 @@ export function presentUser(actor: Actor, administration: Administration) {
 export function presentTask(task: HubSnapshot['tasks'][number]) {
   return { ...task, priority: task.priority === undefined ? 'medium' : task.priority <= 10 ? 'urgent' : task.priority <= 30 ? 'high' : task.priority <= 60 ? 'medium' : 'low' };
 }
-export function presentState({ snapshot, actor, administration, output = [] }: PresentationInput) {
+export function presentState({ snapshot, actor, administration, output = [], simulated = true }: PresentationInput) {
   const history = presentHistory(snapshot);
   const taskTitle = (id: string | undefined) => snapshot.tasks.find((task) => task.id === id)?.title ?? 'Project inbox';
   const attentionRequest = (request: RequestView) => ({
@@ -47,7 +48,10 @@ export function presentState({ snapshot, actor, administration, output = [] }: P
     return { ...session, state: session.lifecycle, runtimeLabel: profile?.label ?? session.runtimeInstallationId,
       ...(profile ? { profileId: profile.id } : {}),
       capabilities: { instructionModes: capability.activeInputModes, stopModes: capability.stopModes, canContinue: capability.continueNativeSession?.support === 'supported', nativeQuestionSupport: capability.nativeQuestions?.support === 'supported', bridgeQuestionSupport: capability.requestBridge?.support === 'supported' },
-      limitations: ['Simulated connection. No real agent or infrastructure is connected.', ...(session.controlMode === 'observe' ? ['View only: no instruction or stop authority.'] : []), ...(session.runtimeInstallationId === 'runtime-sim-limited' ? ['Limited bridge profile: no immediate steering or native approvals.'] : [])],
+      limitations: [administration.installations.list(actor).find((item) => item.id === session.runtimeInstallationId)?.simulator
+        ? 'Simulated connection. No real agent or infrastructure is connected.'
+        : 'External connection. HTTP acceptance is not proof of execution. Native clients may also control this session.',
+        ...(session.controlMode === 'observe' ? ['View only: no instruction or stop authority.'] : []), ...(session.runtimeInstallationId === 'runtime-sim-limited' ? ['Limited bridge profile: no immediate steering or native approvals.'] : [])],
     };
   });
   const bindings = snapshot.environmentBindings.map((binding) => {
@@ -66,8 +70,8 @@ export function presentState({ snapshot, actor, administration, output = [] }: P
   const active = snapshot.dashboard.activeAttempts;
   const review = snapshot.results.filter((result) => snapshot.tasks.some((task) => task.id === result.taskId && !['done', 'canceled'].includes(task.status)));
   return {
-    snapshotCursor: snapshot.dashboard.snapshotCursor, generatedAt: new Date().toISOString(), simulator: true,
-    limitations: ['Simulation only. Core conformance is not live-provider compatibility.'], me: presentUser(actor, administration),
+    snapshotCursor: snapshot.dashboard.snapshotCursor, generatedAt: new Date().toISOString(), simulator: simulated,
+    limitations: [simulated ? 'Simulation only. Core conformance is not live-provider compatibility.' : 'External adapters configured. Full cross-service acceptance is not established by configuration.'], me: presentUser(actor, administration),
     projects: administration.projects.list(actor),
     users: administration.users.list(actor).map((user) => ({ id: user.id, displayName: user.displayName, role: user.role === 'administrator' ? 'admin' : 'member', enabled: user.enabled, revision: user.revision, ...(actor.role === 'administrator' ? { projectIds: user.projectIds, profileIds: user.profileIds, bindingIds: user.bindingIds } : {}) })),
     installations: administration.installations.list(actor),
@@ -87,7 +91,7 @@ export function presentState({ snapshot, actor, administration, output = [] }: P
       };
     }),
     environmentBindings: bindings,
-    profiles: snapshot.profiles.map((profile) => ({ ...profile, defaultEnvironmentMode: profile.defaultEnvironment['mode'], simulator: administration.installations.list(actor).find((installation) => installation.id === profile.runtimeInstallationId)?.simulator ?? false, limitations: ['No production connector is supplied', ...(profile.runtimeInstallationId === 'runtime-sim-limited' ? ['Limited bridge interaction; unsupported controls are refused.'] : [])] })),
+    profiles: snapshot.profiles.map((profile) => ({ ...profile, defaultEnvironmentMode: profile.defaultEnvironment['mode'], simulator: administration.installations.list(actor).find((installation) => installation.id === profile.runtimeInstallationId)?.simulator ?? false, limitations: [administration.installations.list(actor).find((installation) => installation.id === profile.runtimeInstallationId)?.simulator ? 'Deterministic simulator, not real-service evidence.' : 'Configured external adapter; inspect its reported capabilities and limitations.', ...(profile.runtimeInstallationId === 'runtime-sim-limited' ? ['Limited bridge interaction; unsupported controls are refused.'] : [])] })),
     attention: {
       answerNeeded: snapshot.dashboard.answerNeeded.map(attentionRequest),
       approvalNeeded: snapshot.dashboard.approvalNeeded.map(attentionRequest),
