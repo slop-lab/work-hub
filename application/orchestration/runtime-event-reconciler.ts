@@ -11,6 +11,7 @@ import type { ExecutionRepository } from "../persistence/execution-repository.ts
 import type { InteractionRepository } from "../persistence/interaction-repository.ts";
 import type { ResultRepository } from "../persistence/result-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
+import { canonicalJson, digest } from '../persistence/codec.ts';
 
 export class RuntimeEventReconciler {
   private readonly input: {
@@ -85,7 +86,11 @@ export class RuntimeEventReconciler {
         this.input.results.create({ workspaceId, taskId: attempt.taskId, attemptId: attempt.id,
           authorId: `runtime:${installationId}`, summary: event.payload.summary,
           limitations: [], referenceIds: event.payload.referenceIds,
-          evidence: [{ origin: "runtime_observation", detail: "Submitted by runtime event." }] });
+          evidence: [{ origin: "runtime_observation", detail: canonicalJson({
+            sourceInstallationId: installationId, nativeSession: event.nativeSession,
+            sourceEventId, contentDigest: digest(event.payload.summary),
+            observation: 'Captured runtime report, not independent commit or CI verification.',
+          }) }] });
         return;
       }
       case "gap":
