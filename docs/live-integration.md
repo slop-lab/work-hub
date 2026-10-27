@@ -1,226 +1,176 @@
-# Optional live integration: implementation and limits
+# Optional runtime and environment integrations
 
-Branch: `integration/dim-opencode-live`, based on native `origin/main`
-`8269a7777e7d572b47919b9733331746b96c6204`. The integration-only checkpoint is
-`66b2fd2e6209e9c7aaeef109cbdc0c66023516bc`. The operator's finish sequence then
-normally merged exact QG candidate `31120c1b2945395464b31998db6223852f0715b4`
-and its ancestry, preserving its package pin, lockfile, rules and source entrypoint.
+Work Hub is the task-management product, not a DIM/OpenCode-specific frontend.
+Environment providers, agent runtimes and document sources are separate choices.
+DIM plus OpenCode is one supported integration direction, not the only way to use
+Work Hub. AKB and Blocks are optional to task execution and completion.
 
-## Responsibility and evidence
+## Product direction versus implemented adapters
 
-Work Hub keeps tasks, immutable attempt input, commands/outbox, questions, answers,
-results and explicit human completion. The optional adapters live under
-`application/connectors`. OpenCode keeps its actual agent/model/tool loop. DIM
-keeps environment and service lifecycle. AKB keeps canonical knowledge and human
-acceptance; see [the pending owner contract](akb-owner-contract.md).
+| Component | Responsibility | Current Work Hub implementation |
+| --- | --- | --- |
+| Work Hub | Tasks, attempts, captured input, questions, commands, results, human completion | Core product |
+| Environment provider | Environment identity, resources, lifecycle and service access | Simulator and limited DIM scoped adapter |
+| OpenCode | Its own agent/model/tool loop and native sessions | Concrete runtime adapter |
+| Claude Code | Its own agent/model/tool loop and conversations | Official Agent SDK adapter for existing-session attachment and turns |
+| Codex CLI | Its own agent/model/tool loop and threads | App-server adapter with native thread/turn identities |
+| AKB | Documents, knowledge, permissions and revisions | Authenticated Page read and explicit revision-pinned task-context capture |
+| Blocks | AKB's editor/rendering dependency | No Work Hub editor integration required |
 
-No Docker, SSH, scheduler, host socket, master credential or lifecycle engine is
-introduced. This coding workspace is an ordinary container, not a KVM guest test
-runner. No existing environment is a disposable lifecycle test target.
+Additional runtimes must implement the existing `AgentRuntimeConnector` port.
+They must not require a second task engine or silently replace the chosen runtime,
+agent or model. Native resume, questions, approvals, interrupt and history support
+are negotiated per adapter; an unsupported capability remains explicit.
 
-### Actual OpenCode surface used
+## Configured runtime and document connections
 
-The installed 1.18.31 server's own `/doc` and a separate disposable server were
-used to verify these interfaces:
+The private connection file accepts separate `opencode`, `codex`, `claude`, `dim`
+and `akb` arrays. An installation need not configure OpenCode to use another
+runtime. Each installation ID is unique; there is no simulator or model fallback.
+
+Codex connections specify the trusted executable, working directory, private
+Codex home and deliberate model/provider. They use the official app-server
+protocol. A configured DIM environment mapping is checked separately from native
+thread identity. Native questions/approvals remain in the native client; the
+adapter does not fabricate a response route. Its owned stdio process quiesces
+new input and drains accepted native turns before shutdown.
+
+Claude Code connections use the pinned official Agent SDK and an approved working
+directory. The stable interface does not create an empty native session, so the
+adapter attaches an existing session without a greeting or initial prompt.
+Model selection is explicit; filesystem session discovery is not proof of model
+authentication. Unknown turns are not resent. Closing Work Hub drains its active
+SDK queries rather than forcefully closing or aborting them.
+
+AKB connections specify the source origin and server-side authorization, source
+workspace and permitted Spaces/Pages, plus the destination Work Hub workspace
+and permitted projects. Task context capture re-reads the selected Page and
+rejects changed revisions, archive state or denied/missing access. The resulting
+reference retains selected text and source provenance in the existing immutable
+attempt-input flow. It creates no editable document mirror or automatic proposal.
+
+Connection discovery and profile selection are available in Settings. A task's
+References section offers explicit AKB preview/capture. Source authorization and
+runtime credentials are never browser form values, URLs or storage entries.
+
+## Current OpenCode adapter contract
+
+The adapter under `application/connectors/opencode` was developed against the
+OpenCode 1.18.31 API shape. This is a compatibility baseline, not a claim about
+the version or availability of any running service. Verify each target server's
+own API description before configuring it. The used interfaces are:
 
 - `GET /global/health`, `/path`, `/agent`, `/config/providers`;
 - `GET /session?limit=50`, `POST /session`, `GET /session/{id}`;
-- `POST /session/{id}/prompt_async`, exact `GET /session/{id}/message/{messageID}`;
-- bounded `GET /session/{id}/message?limit=100`;
+- `POST /session/{id}/prompt_async`;
+- exact `GET /session/{id}/message/{messageID}` and bounded message history;
 - `GET /question`, `POST /question/{id}/reply`, `POST /session/{id}/abort`.
 
-Configured-provider discovery avoids the unrelated global `/provider` catalog,
-observed at about 7.1 MiB. Transport reads remain bounded to 2 MiB with a 10-second
-whole-operation deadline covering response headers and body reads, redirects
-refused and automatic HTTP retries disabled. Caller cancellation also settles
-the entire operation; stream cancellation is initiated but never awaited on the
-failure path. Completed requests detach timers and caller cancellation without
-aborting accepted native work. Agents with
-`hidden: null` are handled as reported by this installed server. Agent/model
-selection is explicit, checked again before input, and never silently replaced.
-OMO role model choices and configuration are not rewritten.
+The transport uses a whole-operation deadline, bounded response bodies, no
+redirects and no automatic HTTP retries. Selection is explicit and checked again
+before input. Runtime/provider configuration is not rewritten by Work Hub.
 
-Each native mutation is fenced in a separate private SQLite ledger before the
-HTTP effect. A client message ID is retained before sending. HTTP 204 alone is
-**unknown delivery**, not proof of start or success. Exact user-message history
-can confirm receipt. A corresponding assistant must be observed before reporting
-runtime activity, and a completed associated assistant report is collected as a
-result, not independent engineering verification or task completion.
+Each native mutation is fenced in a private persistent connector ledger before
+the HTTP effect. A client message ID is saved before sending. HTTP 204 alone is
+unknown delivery, not proof of running or success. Exact user-message history can
+confirm receipt; associated assistant observations establish runtime activity.
+An associated completed assistant report is a result, not independent engineering
+verification or human task completion.
 
-No native prompt deduplication is claimed. Unknown input is never resent, even
-after restart. Lookup only inspects the exact original message; missing history
-does not prove non-execution. Session creation and lost question/abort responses
-may require manual native inspection rather than automatic recovery.
+No native prompt deduplication is claimed. Unknown input is not resent after a
+restart. Lookup inspects the original message only; absent history does not prove
+non-execution. Lost session-create, question-reply or interrupt responses can
+require manual native inspection.
 
-Bindings retain the selected native installation, working directory, session,
-agent/model and Hub-owned input ancestry across restart. Only Hub-owned messages
-and their assistant children enter the task transcript. Unrelated pre-attachment
-or external-client history is omitted, not copied into project access. Text is
-bounded to 64 KiB per part and 100 native messages per observation; gaps remain
-visible in the browser. Raw tool stdout and provider error bodies are not proxied.
+Bindings retain installation, working directory, native session, explicit
+agent/model and Hub-owned message ancestry. Only that ancestry enters a task's
+transcript. Unrelated native history is not copied into project access. History
+is bounded and partial; gaps remain visible. Provider error bodies and raw tool
+stdout are not exposed through the browser.
 
-One native free-text or single-choice question is mapped when its tool message
-belongs to the current attempt. Multi-question, multi-select and native permission
-approval shapes require the authenticated native view. Work Hub does not invent
-local answers to them. Interrupt acknowledgment does not establish termination.
-Native clients may also control a session; exclusive native control is not claimed.
-
-Runtime mutations require the saved control grant. DIM-backed runtime bindings
-also retain their environment scope/expiry and refuse new input after expiry.
-Safety interrupt remains possible after environment expiry. A mapped connection
-cannot bypass DIM authority using environment-free delegation.
+One associated free-text or single-choice native question is supported.
+Multi-question, multi-select and native permission approvals require the native
+client. Queued follow-up is supported; immediate steering and exclusive native
+control are not promised. An interrupt acknowledgment does not prove termination.
 
 ## Trusted connection setup
 
-Set `WORK_HUB_CONNECTIONS` to a private **0600**, single-link, user-owned regular
-JSON file, at most 64 KiB. The service reads it at startup. Never put it in a
-tracked directory, task text or browser form. Production operator credentials
-belong in a reviewed service outside the untrusted coding workspace. The browser
-receives safe projected discovery only, never connection origins or credentials.
+`WORK_HUB_CONNECTIONS` points to a private 0600, single-link, user-owned regular
+JSON file, at most 64 KiB. The backend reads it at startup. Credentials must not
+appear in task text, tracked files, browser URLs or browser storage. Use a scoped
+runtime connection, not host-wide credential passthrough.
 
-An external-runtime-only configuration looks like this; placeholders are not
-credentials or working installation identifiers:
+This is an illustrative external-runtime-only shape, not a deployed instance:
 
 ```json
 {
   "opencode": [{
-    "installationId": "opencode-approved-environment",
-    "label": "Approved OpenCode connection",
-    "origin": "https://scoped-runtime.internal/",
+    "installationId": "opencode-example",
+    "label": "Selected runtime connection",
+    "origin": "https://runtime.example.com/",
     "directory": "/approved/repository",
     "authorization": "Basic OPERATOR_SUPPLIED_SCOPED_AUTHORIZATION",
-    "nativeUrlTemplate": "https://authenticated-native-view.example/"
+    "nativeUrlTemplate": "https://native.example.com/"
   }],
   "dim": []
 }
 ```
 
-Use **Settings > Discover connections** to inspect actual agent/model availability
-and directory. Save an execution profile with an explicit project mapping.
-Delegate only from a task. For an existing native session, copy its exact discovery
-reference into **Session > Attach existing agent session**. Observe is the default;
-attachment sends no greeting, resume or initial task input. Native open links are
-operator-configured authenticated inspection/fallback URLs, never share-token URLs.
+Use **Settings > Discover connections** to inspect the actual directory, agents,
+models and sessions. Save a profile with the intended project mapping. For an
+existing native session, use its exact discovered identity in **Session > Attach
+existing agent session**. Observe is the default; attachment sends no initial
+prompt. A native open link is an operator-configured authenticated inspection or
+fallback path, not the sole task UI or a fabricated sharing URL.
 
-### DIM scoped adapter, not an invented host catalog
+## DIM scoped connection
 
-The actual available DIM interface in this workspace provides read-only
-`GET /v1/resources` and `GET /v1/plugins` under a workspace-scoped bearer. It does
-not expose a global host/workspace catalog, allocation/release grants or current
-incarnation attestation. The adapter therefore offers neither allocation nor
-release, and does not infer either permission from attachment.
+A DIM workspace is intentionally not a DIM host administrator. The current
+workspace-scoped adapter reads `/v1/resources` and `/v1/plugins`; that grant is
+not expected to expose host creation, global workspace management or lifecycle
+authority. Do not interpret this restriction as missing DIM host functionality.
 
-An operator can add a `dim` entry only with explicit `installationId`, `label`,
-scoped `endpoint`/`token`, stable `hostId`, workspace **UUID**, separate
-`incarnation`, `displayName`, `identityExpiresAt`, `runtimeInstallationId`,
-`allowedProjectIds`, and exact `workAreas` (`key`, `path`, `pathNamespace`, access
-and preserve-existing policy). The matching OpenCode entry must have
-`environment: {executionInstallationId, hostId, workspaceId, incarnation}`.
-These are saved operator attestations, not discovery invented by Work Hub. They
-expire closed and require revalidation after recreation. OpenCode `/path` verifies
-the configured working directory. Names and URLs are not stable identity.
+The adapter uses explicit operator-attested host ID, workspace UUID, incarnation,
+expiry, permitted projects and work areas, plus the mapped runtime installation.
+The OpenCode connection must map to the same identity and verify its directory
+through `/path`. Names alone are not identity. Expired attestations fail closed.
+Attach/detach change Hub-owned access records, not target contents or lifecycle.
+This adapter does not implement allocation, release, service launch or a scheduler.
 
-Settings can register these exact targets, then **Environments > Verify read-only**
-performs scoped discovery. Attach/detach mutate Hub-owned access records only.
-No target contents or lifecycle are changed. Grant references and route membership
-are checked before attaching/opening; the derived runtime authority retains its
-environment grant expiry and work-area scope.
+The scoped adapter reports external-writer activity as unknown and never treats
+that as an enforced write lease. Host lifecycle operations are not exposed by
+this connection type. Its behavior is separate from the runtime adapter selected
+for a task.
 
-**Writable DIM attachment is not accepted as live-qualified here.** The scoped
-interface cannot establish that external native work is idle. The connector
-reports activity as unknown, and the existing core refuses a writable attachment
-without safe activity evidence. Do not relabel unknown as idle to pass a demo.
-The DIM owner must supply a supported scoped identity/activity/lease discovery
-interface or a reviewed trusted operator adapter, plus a disposable target. A
-host-wide token inside this workspace is not an acceptable workaround.
+## Reproducible checks
 
-## Actual-service checks
-
-No provider or model is hardcoded in core. The acceptance commands deliberately
-select this request's model and the currently discovered coordinator:
+Default tests do not require live model spending. Live checks need deliberate
+selection from the target runtime's discovery, not a repository-wide fixed model:
 
 ```sh
 npm ci
 npm run check
-WORK_HUB_LIVE_MODEL=openai/gpt-6.1-sol \
-WORK_HUB_LIVE_AGENT='Sisyphus - ultraworker' \
-node --test tests/live-opencode.test.ts
 
-PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium \
-WORK_HUB_LIVE_MODEL=openai/gpt-6.1-sol \
-WORK_HUB_LIVE_AGENT='Sisyphus - ultraworker' \
+# Replace both values using the target runtime's actual discovery.
+export WORK_HUB_LIVE_MODEL='<selected-provider>/<selected-model>'
+export WORK_HUB_LIVE_AGENT='<selected-agent>'
+node --test tests/live-opencode.test.ts
 npx playwright test tests/browser-live-opencode.spec.ts
 ```
 
-The opt-in fixtures start their own loopback OpenCode process in a separate
-temporary work directory with a generated dedicated password. They do not attach
-to or prompt an existing session. Backend data/credentials live in a different
-temporary directory from the runtime work area. Default tests do not spend model
-tokens; the live tests explicitly skip without a selected model and agent.
+Use a compatible installed Chromium via `PLAYWRIGHT_EXECUTABLE_PATH` when needed.
+The opt-in fixtures create their own authenticated loopback OpenCode process and
+temporary work area; they do not prompt an existing session. Default tests and
+live checks must be reported separately. See [verification boundaries](integration-verification.md).
 
-The live connector check exercises real question/answer/result and ledger reopen.
-The browser check uses real authenticated Work Hub HTTP, configured discovery,
-profile creation, task delegation, a native question, backend/connector recreation
-while waiting, answer delivery, bounded transcript, a same-session continuation,
-second result and explicit human completion. The ordinary DIM conformance checks
-are wire fixtures, not real host lifecycle acceptance. No guest KVM claim is made.
+## Deployment state is not documentation
 
-## Persistent development services and route
+No development service URL, route/session/task ID, supervisor state or bootstrap
+completion record is a permanent product address or setup instruction. Obtain
+current endpoints from protected deployment configuration and the environment
+owner's service interface. Keep per-run evidence outside tracked product docs.
 
-The dedicated development OpenCode helper starts only its own fixture directory
-`.deps/opencode-dev-workdir`, generates only a fixture credential in `data`, and
-does not launch through Work Hub core. Existing OMO models remain unchanged.
-
-```sh
-dim-expose --name workhub-ui --port 3000 --ingress shared
-dim-expose --name workhub-native --port 4198 --ingress shared
-dim-workspace service register --name workhub-native-dev -- env \
-  WORK_HUB_CONNECTIONS=/workspace/main/data/live-connections.json \
-  WORK_HUB_NATIVE_PUBLIC_ORIGIN=https://work-hub-integration--workhub-native.mj-y.com/ \
-  node /workspace/main/scripts/dev-native-service.ts
-dim-workspace service resume
-
-# Once, locally; save the administrator token privately.
-npm run bootstrap
-npm run build
-dim-workspace service register --name workhub-ui-dev -- env \
-  WORK_HUB_CONNECTIONS=/workspace/main/data/live-connections.json \
-  DATA_DIR=/workspace/main/data \
-  PUBLIC_ORIGIN=https://work-hub-integration--workhub-ui.mj-y.com \
-  node /workspace/main/application/api/server.ts
-dim-workspace service resume
-dim-workspace service list
-```
-
-The first bootstrap has already been done for this development instance. Do not
-repeat it. An operator can issue a new local user credential with
-`npm run bootstrap -- credential user-admin`; no credential is included in this
-document. Service restart does not stop native work or erase SQLite data.
-
-Observed routes, approval `not-required`:
-
-- Work Hub: `https://work-hub-integration--workhub-ui.mj-y.com/`, route ID
-  `b0c363d7-dee4-492c-9f8f-299d409612e7`.
-- Dedicated native fixture: `https://work-hub-integration--workhub-native.mj-y.com/`,
-  route ID `b502443a-1bb1-4768-ad74-33299170d8f2`.
-
-Both services were observed running. Work Hub `/health` returned 200 with
-`simulation:false, liveReady:false`; unauthenticated Work Hub data and native
-OpenCode health both returned 401. This is development publication, not approval,
-promotion, production installation or full integration acceptance.
-
-## Bounded remaining owner work
-
-1. DIM: supply reviewed scoped host/workspace/incarnation/activity discovery and
-   a disposable target. If VM verification is needed, request a **separate**
-   disposable KVM runner after the assigned DIM runtime/device-grant fix; control
-   plane and host must be separate VMs per DIM's privileged test contract.
-2. AKB: deliver the exact-revision/proposal API contract and scoped installation,
-   workspace/project mapping in [the owner handoff](akb-owner-contract.md). Then
-   implement that actual transport and the context/proposal UI; no fake endpoint
-   or auto-acceptance is supplied in this branch.
-3. Root: run native DIM CI, human review and merge/install using the exact combined
-   proposed SHA. Incorporating QG does not approve or promote either slice.
-4. Run the full Blocks Page > exact AKB revision > DIM/OpenCode > explicit result
-   evidence > human completion > AKB proposal > fresh-browser human acceptance
-   only after those interfaces/principals are provisioned.
+`scripts/dev-native-service.ts` is an optional dedicated development fixture,
+not the universal runtime manager. Service publication, startup, restoration and
+stable logical addresses remain deployment responsibilities. Removing stale URLs
+from docs does not itself fix a disappearing route or restart a stopped service.

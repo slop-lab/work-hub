@@ -3,11 +3,14 @@
 A small, task-centered workspace for durable work records, human questions and
 deliberate agent delegation. Built from the supplied v0.3 implementation baseline.
 
-**The default configuration uses deterministic simulations.** Optional backend-only
-OpenCode and DIM workspace-scoped adapters are described in
-[Live integration and operator setup](docs/live-integration.md). Actual OpenCode
-acceptance is distinct from simulator conformance; full DIM/AKB cross-service
-acceptance remains blocked on the owner interfaces and scoped operator setup.
+**Work Hub is independent of a particular runtime or environment provider.**
+OpenCode, Claude Code and Codex CLI are runtime integration targets; DIM is one
+environment-management option, and AKB is an optional document/knowledge source.
+The default configuration uses deterministic simulations. Optional adapters
+connect OpenCode, Codex CLI and existing Claude Code sessions; a scoped DIM
+connection and authorized AKB Page capture can be configured independently.
+See [runtime integration](docs/live-integration.md) for implemented connection
+configuration and capability-specific behavior.
 
 ## Quick start
 
@@ -121,6 +124,8 @@ excluded from work exports; do not paste secrets into task text or runtime outpu
 - [Acceptance traceability](docs/acceptance.md)
 - [Executed verification and limits](docs/verification.md)
 - [Repository quality gates](docs/quality-gates.md)
+- [Runtime adapters and optional integrations](docs/live-integration.md)
+- [Integration verification procedure](docs/integration-verification.md)
 
 Production qualification, terminal gateways, workflows, automatic prompt retries,
 agent review engines, merges, IDE functionality and infrastructure management remain

@@ -11,9 +11,11 @@ no host runtime installation or infrastructure/control-plane modifications are n
 
 The application owns task intent, human decisions, snapshots, reservations, audit,
 and orchestration receipts. Execution and runtime ports retain the supplied v0.3
-contracts. No model client, agent loop, scheduler, container engine or DIM transport
-is implemented. Simulator installations are explicit and visibly labeled; a missing
-installation fails closed, never falls back to simulation.
+contracts. Core implements no model client, agent loop, scheduler or container
+engine. Provider-specific transports live in optional adapters under
+`application/connectors`, not in the task engine. Simulator installations are
+explicit and visibly labeled; a missing installation fails closed, never falls
+back to simulation.
 
 ## ADR 002: Canonical rows plus an outbox
 
@@ -38,6 +40,47 @@ Authenticated state-changing browser calls require a matching Origin. Runtime
 bridge credentials are independently scoped and cannot act as administrators or
 answer human approvals. Network exposure requires TLS termination and explicit
 public origin configuration. The default listener is loopback.
+
+## ADR 004: Runtime and environment choices are independent
+
+Work Hub owns task intent, explicit delegation, immutable attempt input, durable
+questions, follow-up commands, uncertainty, results and human completion.
+OpenCode, Claude Code and Codex CLI own their respective model/tool loops.
+Each runtime maps its supported machine interface to `AgentRuntimeConnector`;
+one runtime's questions, resume or interrupt semantics are not universal promises.
+
+DIM is an optional environment provider, not Work Hub's task/delegation authority.
+Adapters use supported interfaces for their execution location. Container-based
+DIM workspaces can configure scoped connections and workspace-user services
+without acquiring host administration. Do not pass host credentials or
+administration sockets through to a guest. Existing host and workspace identity
+must be distinguished from display names.
+
+Runtime-specific adapters must not create a second scheduler or silently replace
+the selected runtime. Each installation advertises its implemented capabilities.
+
+## ADR 005: Optional document context, not a second document authority
+
+AKB owns its Pages, Knowledge, permissions and revisions. Blocks is its existing
+editor/rendering dependency; choosing AKB context does not require a new editor
+inside Work Hub. Work Hub can first retain an external link, then optionally
+capture authorized content and its returned revision in an attempt snapshot.
+That snapshot records what an agent received; it is not an editable AKB replica.
+
+Writing a result to a Page or submitting it to AKB's existing Knowledge proposal
+workflow is an optional, explicit authorized action, not a prerequisite for task
+execution or human completion. No two-way task-status synchronization is implied.
+Existing source permissions and document revisions remain authoritative at the
+document service; capture is an explicit Work Hub action.
+
+## ADR 006: Documentation is not a live service registry
+
+Tracked docs describe contracts, setup procedures and reproducible checks.
+Deployment URLs, route IDs, active session/task IDs, credentials and supervisor
+status belong in protected deployment/runtime state or the relevant run's evidence.
+Discover current endpoints through the environment owner's supported service
+interface. Stopping a service does not rewrite product documentation; a previously
+observed health response is not a promise of current availability.
 
 ## Milestones and acceptance gates
 
@@ -71,6 +114,6 @@ not claims unless accompanied by measurements and the test envelope.
 
 ## Deliberately deferred
 
-Production connectors and live compatibility, terminal/native gateways, workflows,
+Additional runtime adapters and production qualification, terminal/native gateways, workflows,
 automatic reviews/retries/merge, IDE tooling, infrastructure management, external
 tracker sync and multi-tenant SaaS. Connector conformance is not live readiness.
