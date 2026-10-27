@@ -1,142 +1,76 @@
-# Integration verification observed on 2026-10-26 UTC
+# Integration verification boundaries
 
-This is evidence for the optional integration slice, not production qualification
-or the complete DIM + AKB + Blocks acceptance target.
+This document describes reproducible acceptance, not current service availability.
+It is not a registry of deployment URLs, route IDs, running processes or active
+sessions. Store exact run/candidate versions, selected agent/model, logs and
+receipts with the CI/review record or private disposable-test evidence.
 
-## Executed checks
+## Independent verification layers
 
-| Command/surface | Observed result |
-| --- | --- |
-| `npm run check` | Strict TypeScript, 244 passing default tests, one explicitly skipped opt-in live test, build exit 0 |
-| `npm run typecheck && npm run build` after final frontend edits | Exit 0 |
-| Explicit live `node --test tests/live-opencode.test.ts` | One actual-service test passed |
-| Full Playwright suite with explicit live agent/model | All 27 journeys passed |
-| Published authenticated development UI | Sign-in, discovery, explicit model/agent profile, durable task/reference and two owner questions observed working |
-| Fresh screenshots | 18 route captures at 375/768/1280 plus three actual-service session captures; zero primary overflow and page errors |
-| Two independent visual review passes | Both PASS on the same 21-capture set |
+| Layer | Surface | What it establishes |
+| --- | --- | --- |
+| Source gate | `bash scripts/ci/source.bash` | Pinned install, QG, strict types, default behavioral tests and build |
+| Adapter fixtures | `tests/contracts.opencode.test.ts`, `tests/contracts.opencode-environment.test.ts`, `tests/contracts.dim.test.ts` | Wire mapping, authority and failure semantics, not real host lifecycle |
+| Native OpenCode | Explicit opt-in `tests/live-opencode.test.ts` | Actual disposable native question/answer/result and connector-ledger reopen |
+| Native browser flow | Explicit opt-in `tests/browser-live-opencode.spec.ts` | Work Hub discovery, selection, delegation, waiting, reconnect, answer, continuation, result and human completion |
+| Transport regressions | `tests/opencode-transport.test.ts` | Whole-response deadlines, caller cancellation and safe stream cleanup |
+| Source export | `tests/source-snapshot.acceptance.ts` | Metadata-free source membership and unchanged QG enforcement |
+| DIM host integration | Separate disposable VM acceptance | Actual host/workspace lifecycle, identity, service access and permitted operations |
+| Other runtimes | Their future adapter conformance and actual-service checks | Claude Code/Codex CLI support; OpenCode results are not evidence for them |
+| Optional AKB context | Scoped actual AKB reads plus captured input checks | Authorized document/revision capture, not Knowledge acceptance |
 
-The opt-in runs used `WORK_HUB_LIVE_MODEL=openai/gpt-6.1-sol` and
-`WORK_HUB_LIVE_AGENT='Sisyphus - ultraworker'`. Playwright used
-`PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium` because this ordinary Alpine coding
-container cannot run the downloaded glibc browser. Chromium was installed only
-inside this coding container. No host runtime, socket or policy was changed.
+Use the opt-in commands in [runtime integration](live-integration.md). A skipped
+live test is not a live pass. A process being present or an HTTP 204 response is
+not proof of model execution. Idle is not success. Connector-ledger reopen is
+not proof that every provider supports recovery after its own server restart.
 
-The actual native server reported OpenCode **1.18.31**. One independently executed
-native run recorded session `ses_e8953f7ddffeOl65Z6sfdduTfQ`: question answered,
-result received, the same native binding after connector ledger reopen, and two
-retained user/assistant output items. This is a newly created fixture session,
-not the original implementation coordinator's session.
+## Task acceptance common to runtimes
 
-The actual browser journey exercised discovery, task creation/delegation, native
-waiting question, Hub/connector recreation while waiting, human answer delivery,
-result collection, visible partial-history coverage, same-session continuation,
-second result and explicit human completion. Neither HTTP 204 nor idle was used
-as evidence of start/success. The native test and all default tests are reported
-separately; wire fixtures are not labeled real DIM lifecycle acceptance.
+1. Select an environment connection or an environment-free runtime as supported;
+   verify exact identity and working directory, not a friendly name.
+2. Select an explicit runtime/profile and attach or create a disposable native
+   session only where that provider supports it.
+3. Save immutable attempt input, then send exactly one task input. Keep accepted,
+   observed-running, waiting, unavailable and unknown outcomes distinct.
+4. Deliver supported questions/follow-ups to their exact attempt. For unsupported
+   approvals or interaction shapes, show the limitation and native fallback.
+5. Recreate Work Hub and its connector ledger while waiting; preserve the native
+   session ID and never resend an unknown input under a new identity.
+6. Collect an associated result and explicit evidence references. Assistant text
+   is not a verified repository commit, CI result or review approval.
+7. Complete the task only through a human decision. Completion, interrupt,
+   session detachment and environment release remain separate actions.
 
-## Safety findings reproduced and corrected
+Native session history is deliberately bounded. Excluded ancestry, missing
+history and output truncation must remain visible rather than appearing complete.
+Test this separately for every runtime and adapter version.
 
-- Unknown prompt delivery remains fenced after restart, without a second POST.
+## Regression invariants
+
+- Unknown prompt delivery remains fenced after restart without another POST.
 - Native transcript import excludes unrelated external/pre-attachment ancestry.
-- Unrelated native questions cannot make the current attempt appear waiting.
-- Input requires the current control grant; DIM-backed bindings retain use-grant
-  scope/expiry. Missing/expired grants and forged route membership are refused.
-- Environment expiry blocks more input but not a safety interrupt.
-- Older native-attempt observations cannot finish the current Hub attempt.
-- Connector history gaps survive reconciliation and remain visible to users.
-- Continuation includes the current profile revision without a simulator fallback.
-- Long captured revision IDs/digests reflow on mobile, and background refresh
-  preserves the main scroll position without replaying a scroll animation.
+- Only questions and results associated with the current attempt affect it.
+- Control/use-grant scope and expiry are enforced; route membership is checked.
+- Environment expiry blocks new input but must not prevent a safety interrupt.
+- Full-response deadlines cover both headers and body; cleanup must not hang.
+- Successful asynchronous handoff must detach transport timers/cancellation
+  without aborting native work.
+- A metadata-free DIM source snapshot must still run the same QG rules and source
+  checks. Temporary membership metadata supplies no history, approval or CI authority.
 
-New production adapter modules are at most 148 source lines. The touched
-runtime-observation test file is 233 nonblank/non-comment lines; do not grow it
-without splitting subsequent coverage. Source responsibilities remain separated:
-transport/schema, native ownership, input receipts, observations and configured
-connection projection. Boundary values are parsed with Zod; no type-suppression
-or untyped assertion was added.
+The source-snapshot procedure is documented in
+[quality gates](quality-gates.md#authoritative-metadata-free-dim-snapshots).
+Changing or locally reproducing the source entrypoint is not an accepted native
+DIM CI publication. Use exact-candidate CI and human review records for that claim.
 
-## Narrow transport review closure
+## Evidence and configuration lifetime
 
-An independent review found that Ky's own timer stops after response headers.
-The connector now races the complete request/body operation against its unchanged
-ten-second deadline and caller cancellation, with non-blocking stream cleanup.
-Safe cancellation errors preserve read-only retry versus mutation reconciliation;
-caller cancellation reasons and provider bodies are not exposed.
+Tracked documents retain procedures, capability limits and source references.
+Protected runtime/deployment state retains current endpoints, connection files
+and supervisor configuration. CI/review or disposable run artifacts retain exact
+versions, outcomes and receipt identifiers. A dated health observation must not
+be used as present service discovery.
 
-Disposable loopback acceptance reproduces an HTTP 200 response with flushed
-headers and a JSON body that never ends. Before the fix it remained pending after
-12 seconds; after the fix it failed with `opencode_timeout` at about 10.01 seconds.
-An oversized synthetic stream whose `cancel()` never settles previously hung;
-it now reports the unchanged 2 MiB limit promptly and releases its reader lock.
-Caller cancellation after headers also settles promptly, hides its private reason
-and sends the mutation only once. A fourth regression ensures a successful HTTP
-204 does not abort native work, retain caller cancellation, or retain its deadline
-timer. The actual native question/answer/result flow passed after that correction.
-All four transport regressions and the existing OpenCode conformance tests passed
-together. Final combined source and relevant
-actual-service/browser verification are reported with the final candidate SHA.
-
-## Persistent development record
-
-- UI: `https://work-hub-integration--workhub-ui.mj-y.com/`.
-- Handoff task: `#/backlog/task-3a32f01c-d00f-4eba-9f95-95da2ff6c69e` on that UI.
-- The task retains the actual command evidence and explicit nonblocking AKB/DIM
-  owner questions. It was not re-delegated to another implementation agent.
-- Work Hub and dedicated native fixture service supervisors were observed running.
-- Public Work Hub health: HTTP 200, `simulation:false`, `liveReady:false`.
-- Unauthenticated Work Hub data and native OpenCode health: HTTP 401.
-- Route IDs, setup and credential handling: [live integration](live-integration.md).
-
-Screenshots, browser output, runtime credentials, databases and the local Blocks
-checkout remain ignored/untracked. The integration-only checkpoint is
-`66b2fd2e6209e9c7aaeef109cbdc0c66023516bc`. The operator subsequently required
-exact QG candidate `31120c1b2945395464b31998db6223852f0715b4`; it and all its
-ancestry were normally merged without conflicts. The `@slop-lab/qg@0.1.0` pin,
-lockfile, enabled rules, thresholds and source entrypoint are preserved.
-Only the exact ignored external Blocks checkout was added to the downloaded
-artifact registry, and two integration statements were wrapped without behavior
-changes. Final combined source/actual-service verification is reported with the
-combined candidate SHA in the handoff. No unrelated session/workspace was reset.
-
-## Required DIM CI snapshot followup
-
-The required DIM source job for `3d105ef43990332004e91dd7b4d504d18e43b2a6`
-failed with exit 2 in generation 869, ordinary-sysbox on sub1:
-
-- Review: `82eeb1580572a7b4c93542d29202a1de99c67c1f2d7d704dde8b0ca9b1401d83`.
-- Execution: `8d61f087-d46a-45b3-91c0-23a7207a7d30`.
-- Admission/publication were accepted and `cleanupComplete=true`.
-- QG's `git ls-files` failed because the authoritative source snapshot has no
-  `.git`; the earlier development-checkout PASS was not a required-CI PASS.
-
-The same failure was reproduced in a disposable metadata-free export. A second
-fixture also showed that borrowing parent Git metadata could falsely pass a
-local-only file. The source entrypoint now adapts snapshot membership using a
-disposable external index before installing dependencies, without changing QG
-rules or treating that index as history, approval or CI evidence.
-
-The disposable acceptance subsequently passed the full source gate and produced
-the browser build without persisting `.git`. Its ignored local-only violation
-was rejected with exit 1 by `git/no-tracked-local-files`; the file and unrelated
-parent index remained intact, and temporary metadata was cleaned on both paths.
-See [the snapshot contract and command](quality-gates.md#authoritative-metadata-free-dim-snapshots).
-Runtime connectors, model/agent choices, credentials, DIM authority and deployed
-services were not changed. Root must rerun required exact-commit DIM CI and human
-review for the new candidate; local reproduction is not a CI publication.
-
-## Not verified / not claimed
-
-- LSP diagnostics could not run because TypeScript/Biome language servers are not
-  installed. Strict `tsc`, the build and executable tests are the substitute.
-- Lighthouse scores were not measured; no 100-score claim is made.
-- DIM's current scoped API does not establish fresh host/workspace incarnation or
-  external-writer idleness. Writable attachment, allocation/release and VM/KVM
-  lifecycle acceptance are not claimed. A separate disposable runner and reviewed
-  operator discovery/lease interface are still required.
-- AKB exact-revision context and proposal transport/UI await the owner's reviewed
-  contract and scoped installation/project mapping. No guessed endpoint, fake
-  canonical store, proposal acceptance or two-way status synchronization exists.
-- Git/CI evidence is never inferred from an assistant's text. Full source/commit,
-  CI and review references must be attached and checked in the remaining run.
-- Native DIM CI publication, human code review, merge/promotion and installation
-  remain root/operator actions. No self-approval or production deployment occurred.
+This separation does not erase historical evidence: earlier run records remain
+in version history or their original evidence system. It prevents stale instance
+records from becoming permanent product setup or an integration prerequisite.
