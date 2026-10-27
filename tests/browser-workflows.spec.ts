@@ -21,7 +21,7 @@ test("Given multiple projects and owners, when backlog filters and capture selec
 		await page.getByRole("link", { name: "Settings" }).click();
 		await page.getByLabel("Project name").fill("Release engineering");
 		await page.getByRole("button", { name: "Create project" }).click();
-		await expect(page.getByText("Release engineering")).toBeVisible();
+		await expect(page.getByText("Release engineering", { exact: true })).toBeVisible();
 		await page.getByLabel("Display name").fill("Release owner");
 		await page.getByRole("button", { name: "Create user" }).click();
 		await expect(page.getByText("Release owner")).toBeVisible();

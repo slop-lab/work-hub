@@ -139,10 +139,23 @@ function projectForm(ctx: UiContext): HTMLElement {
 
 function projectRow(ctx: UiContext, project: UiContext["state"]["projects"][number]): HTMLElement {
 	const profile = ctx.state.profiles.find((item) => item.id === project.defaultProfileId);
-	const actions = ctx.state.me.role !== "admin" ? null : button("Use first enabled profile", "quiet", () => {
-		const selected = ctx.state.profiles.find((item) => item.enabled);
-		if (selected === undefined) return;
-		void ctx.command({ commandId: commandId(), type: "project.update", target: { kind: "project", id: project.id }, payload: { name: project.name, defaultProfileId: selected.id, expectedRevision: project.revision } }, "Project default profile updated.");
-	});
+	const actions = ctx.state.me.role !== "admin" ? null : projectProfileForm(ctx, project);
 	return el("article", { class: "profile-row" }, el("div", {}, el("strong", {}, project.name), el("span", { class: "mono" }, `${project.id} revision ${project.revision}`)), badge(profile?.label ?? "No default profile", profile === undefined ? "warning" : "info"), actions);
+}
+
+function projectProfileForm(ctx: UiContext, project: UiContext["state"]["projects"][number]): HTMLElement {
+	const select = el("select", { class: "select", name: "defaultProfileId", required: true }, el("option", { value: "" }, "Choose a default execution profile"));
+	for (const profile of ctx.state.profiles.filter((item) => item.enabled)) {
+		const option = el("option", { value: profile.id }, profile.label);
+		option.selected = profile.id === project.defaultProfileId;
+		select.append(option);
+	}
+	const save = submitButton("Save project default", "secondary");
+	const form = el("form", { class: "stack" }, label(`Default execution profile for ${project.name}`, select, "This choice applies to future delegation previews; no runtime or model is selected silently."), save);
+	form.addEventListener("submit", (event) => {
+		event.preventDefault();
+		if (select.value.length === 0) return;
+		void ctx.command({ commandId: commandId(), type: "project.update", target: { kind: "project", id: project.id }, payload: { name: project.name, defaultProfileId: select.value, expectedRevision: project.revision } }, "Project default profile updated for future delegation.");
+	});
+	return form;
 }
