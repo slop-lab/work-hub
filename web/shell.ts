@@ -10,8 +10,33 @@ const navItems = [
 	["settings", "Settings", "#/settings"],
 ] as const;
 
+let activeNavLink: WeakRef<HTMLAnchorElement> | undefined;
+let revealFrame: number | undefined;
+let resizeListenerInstalled = false;
+
+function revealActiveNavLink(): void {
+	const link = activeNavLink?.deref();
+	if (link?.isConnected === true) link.scrollIntoView({ block: "nearest", inline: "center" });
+}
+
+function trackActiveNavLink(link: HTMLAnchorElement): void {
+	activeNavLink = new WeakRef(link);
+	if (!resizeListenerInstalled) {
+		window.addEventListener("resize", () => {
+			if (revealFrame !== undefined) window.cancelAnimationFrame(revealFrame);
+			revealFrame = window.requestAnimationFrame(() => {
+				revealFrame = undefined;
+				revealActiveNavLink();
+			});
+		});
+		resizeListenerInstalled = true;
+	}
+	queueMicrotask(revealActiveNavLink);
+}
+
 export function appShell(state: HubState, route: Route, content: HTMLElement, onLogout: EventListener): HTMLElement {
 	const active = route.kind;
+	activeNavLink = undefined;
 	const nav = el("nav", {
 		class: "app-nav",
 		"aria-label": "Primary navigation",
@@ -20,7 +45,7 @@ export function appShell(state: HubState, route: Route, content: HTMLElement, on
 		const link = el("a", { class: `app-nav__link${active === key ? " is-active" : ""}`, href }, label);
 		if (active === key) {
 			link.setAttribute("aria-current", "page");
-			queueMicrotask(() => link.scrollIntoView({ block: "nearest", inline: "center" }));
+			trackActiveNavLink(link);
 		}
 		nav.append(link);
 	}

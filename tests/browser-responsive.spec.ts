@@ -4,12 +4,39 @@ import { startBrowserHub } from "./browser-fixture.ts";
 const routes = ["dashboard", "backlog", "session", "environments", "settings"] as const;
 const widths = [375, 768, 1280] as const;
 
+test("Given Settings is active at desktop width, when the viewport narrows, then the route reel reveals the active link", async ({ page }) => {
+	const app = await startBrowserHub(page);
+	try {
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await page.goto(`${app.url}/#/settings`);
+		const navigation = page.getByRole("navigation", { name: "Primary navigation" });
+		const settings = navigation.getByRole("link", { name: "Settings" });
+		await expect(settings).toHaveAttribute("aria-current", "page");
+
+		await page.setViewportSize({ width: 375, height: 900 });
+		await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+
+		const settingsIsRevealed = await settings.evaluate((link) => {
+			const routeReel = link.closest(".app-sidebar");
+			if (!(routeReel instanceof HTMLElement)) throw new TypeError("Route reel missing");
+			const reelBounds = routeReel.getBoundingClientRect();
+			const linkBounds = link.getBoundingClientRect();
+			return linkBounds.left >= reelBounds.left && linkBounds.right <= Math.min(reelBounds.right, window.innerWidth);
+		});
+		expect(settingsIsRevealed).toBe(true);
+		await page.screenshot({ path: ".omo/evidence/product-ui-final/route-reel-settings-375.png" });
+	} finally {
+		await app.close();
+	}
+});
+
 test("Given the real product routes, when rendered at required breakpoints, then each route fits without primary overflow", async ({ page }) => {
 	const app = await startBrowserHub(page);
 	try {
 		await page.getByRole("link", { name: "Backlog" }).click();
 		await page.getByLabel("New task title").fill("릴리스 경계를 검증하는 매우 긴 작업 제목과 식별자 abcdefghijklmnopqrstuvwxyz0123456789");
 		await page.getByRole("button", { name: "Add task" }).click();
+		await expect(page.getByText("Task captured.", { exact: true })).toBeHidden({ timeout: 6_000 });
 		for (const width of widths) {
 			await page.setViewportSize({ width, height: 900 });
 			for (const route of routes) {
@@ -57,9 +84,11 @@ test("Given the real product routes, when rendered at required breakpoints, then
 		await page.screenshot({ path: ".omo/evidence/product-ui-final/delegation-provision-375.png" });
 		await page.getByRole("button", { name: "Cancel", exact: true }).click();
 		await page.getByLabel("Reference kind").selectOption("link");
-		await expect(page.getByLabel("Reference URL")).toBeVisible();
+		const referenceUrl = page.getByLabel("Reference URL");
+		await expect(referenceUrl).toBeVisible();
 		await expect(page.getByLabel("Reference text")).toBeHidden();
-		await page.screenshot({ path: ".omo/evidence/product-ui-final/reference-link-375.png", fullPage: true });
+		await referenceUrl.scrollIntoViewIfNeeded();
+		await referenceUrl.locator("xpath=ancestor::form").screenshot({ path: ".omo/evidence/product-ui-final/reference-link-375.png" });
 	} finally {
 		await app.close();
 	}
