@@ -17,6 +17,7 @@ import { exportSafeRecords } from '../artifacts/export.ts';
 import { simulatorRoutes } from './simulator.ts';
 import { eventRoutes } from './events.ts';
 import type { ConfiguredConnections } from '../connectors/configured.ts';
+import { externalContextRoutes } from './external-context.ts';
 
 export type ApplicationOptions = {
   readonly hub: Hub;
@@ -41,7 +42,10 @@ export function createApplication(options: ApplicationOptions) {
     return user;
   };
   app.get('/api/v1/me', (c) => c.json(presentUser(actor(c), hub.administration)));
-  app.get('/api/v1/integrations', async (c) => c.json(options.connections === undefined ? { runtime: [], execution: [] } : await options.connections.discover(actor(c))));
+  app.get('/api/v1/integrations', async (c) => c.json(options.connections === undefined ? { runtime: [], execution: [], knowledge: [] } : await options.connections.discover(actor(c))));
+  if (options.connections !== undefined) app.route('/api/v1', externalContextRoutes({
+    service: options.connections.contextService(hub), actor,
+  }));
   app.get('/api/v1/sessions/:id/native-link', (c) => {
     const current = actor(c);
     hub.getSession(current, c.req.param('id'));
