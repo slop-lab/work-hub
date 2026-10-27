@@ -9,6 +9,16 @@ export const referenceInput = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('link'), title: z.string().min(1).max(500), url: z.url().max(4096) }),
 ]);
 const rowSchema = z.object({ id: z.string(), taskId: z.string(), kind: z.enum(['text', 'link']), title: z.string(), mimeType: z.string(), provenanceJson: z.string(), locatorJson: z.string().nullable(), retainedText: z.string().nullable(), availability: z.string(), contentRevision: z.string().nullable(), createdAt: z.string() });
+export const externalCaptureSelectionSchema = z.strictObject({
+  commandId: z.string().min(1).max(200), taskId: z.string().min(1),
+  installationId: z.string().min(1).max(200), pageId: z.string().min(1).max(200),
+  revision: z.number().int().positive(),
+});
+export const externalCaptureSchema = externalCaptureSelectionSchema.extend({
+  title: z.string().min(1).max(500), retainedText: z.string().max(131072),
+  mimeType: z.string().min(1).max(200), sourceRevision: z.string().min(1).max(500),
+  provenance: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+});
 export class ReferenceRepository {
   readonly store: Store;
   constructor(store: Store) { this.store = store; }
@@ -37,6 +47,28 @@ export class ReferenceRepository {
       digest(reference.kind === 'text' ? reference.content : reference.url), now, now,
     );
     return { kind: 'reference', id, revision: 1 };
+  }
+  assertExternalCaptureAccess(actor: Actor, taskId: string): void {
+    const task = this.store.database.prepare('SELECT project_id AS projectId FROM tasks WHERE workspace_id=? AND id=?')
+      .get(actor.workspaceId, taskId);
+    if (!task) throw invalid('not_found', 'Task not found.');
+    requireProject(actor, z.object({ projectId: z.string() }).parse(task).projectId);
+    if (actor.role === 'runtime') throw forbidden('Runtime references require a separately scoped artifact ingestion capability.');
+  }
+  captureExternal(actor: Actor, input: z.infer<typeof externalCaptureSchema>) {
+    const capture = externalCaptureSchema.parse(input);
+    this.assertExternalCaptureAccess(actor, capture.taskId);
+    const id = newId('reference');
+    const now = this.store.clock.now().toISOString();
+    this.store.database.prepare(`INSERT INTO references_store(
+      id,workspace_id,task_id,kind,title,mime_type,provenance_json,locator_json,retained_text,
+      availability,content_revision,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      id, actor.workspaceId, capture.taskId, 'text', capture.title, capture.mimeType,
+      JSON.stringify({ ...capture.provenance, retainedByHub: true, contentDigest: digest(capture.retainedText) }), null, capture.retainedText,
+      'available', capture.sourceRevision, now, now,
+    );
+    return { kind: 'reference' as const, id, revision: 1 as const };
   }
   get(actor: Actor, id: string) {
     const raw = this.store.database.prepare('SELECT id,task_id AS taskId,kind,title,mime_type AS mimeType,provenance_json AS provenanceJson,locator_json AS locatorJson,retained_text AS retainedText,availability,content_revision AS contentRevision,created_at AS createdAt FROM references_store WHERE workspace_id=? AND id=?').get(actor.workspaceId, id);
