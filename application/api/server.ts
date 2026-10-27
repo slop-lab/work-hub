@@ -51,11 +51,21 @@ async function shutdown(): Promise<void> {
   stopping = true;
   clearInterval(timer);
   await new Promise<void>((resolve) => { server.close(() => resolve()); });
-  await work;
-  hub.close();
-  auth.close();
-  connections?.close();
+  try { await work; }
+  finally {
+    try { await connections?.close(); }
+    finally {
+      try { hub.close(); }
+      finally { auth.close(); }
+    }
+  }
   logger.info('service.stopped_without_external_termination');
 }
-process.once('SIGINT', () => { void shutdown(); });
-process.once('SIGTERM', () => { void shutdown(); });
+function requestShutdown(): void {
+  void shutdown().catch((error: unknown) => {
+    process.exitCode = 1;
+    logger.error({ errorKind: error instanceof Error ? error.name : 'unknown' }, 'service.shutdown_failed');
+  });
+}
+process.once('SIGINT', requestShutdown);
+process.once('SIGTERM', requestShutdown);

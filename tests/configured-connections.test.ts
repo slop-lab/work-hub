@@ -21,7 +21,7 @@ test('configured discovery projects only safe metadata and requires administrato
     assert.equal(JSON.stringify(inventory).includes(fixture.connection.origin), false);
     await assert.rejects(connections.discover(member), /administrator/i);
     assert.equal(fixture.calls.some((call) => call.method === 'POST'), false);
-  } finally { connections.close(); await fixture.close(); rmSync(root, { recursive: true }); }
+  } finally { await connections.close(); await fixture.close(); rmSync(root, { recursive: true }); }
 });
 
 test('connection files with browser-readable permissions are refused', () => {

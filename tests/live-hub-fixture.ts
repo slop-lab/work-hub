@@ -48,7 +48,7 @@ export async function startLiveHub() {
     restart: async () => {
       clearInterval(timer);
       await working;
-      hub.close(); connections.close();
+      await connections.close(); hub.close();
       connections = new ConfiguredConnections(config, join(root, 'connectors.sqlite'));
       hub = new Hub(join(root, 'hub.sqlite'), { mode: 'external', connectors: {
         execution: connections.execution, runtime: connections.runtime,
@@ -59,7 +59,7 @@ export async function startLiveHub() {
     close: async () => {
       clearInterval(timer); await working;
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      hub.close(); connections.close(); auth.close();
+      await connections.close(); hub.close(); auth.close();
       await native.close(); rmSync(root, { recursive: true, force: true });
     },
   };
