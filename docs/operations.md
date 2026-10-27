@@ -4,8 +4,10 @@
 
 One Node 24 process serves the API, browser assets and durable outbox worker. SQLite
 and the simulator's independent persistent ledger live under `DATA_DIR` (default
-`./data`). No Docker daemon, runtime binary, provider account, model API key, external
-database or scheduler is needed. The current connector installations are simulations.
+`./data`). The default simulator configuration needs no Docker daemon, runtime
+binary, provider account, model API key, external database or scheduler. Optional
+live adapters need their separately configured runtime/environment connection;
+they do not make DIM or OpenCode mandatory for the product.
 
 The default bind address is `127.0.0.1`. For network use, put the application behind
 an authenticated TLS reverse proxy and set `PUBLIC_ORIGIN=https://your-hub.example`
@@ -52,8 +54,26 @@ example; native Node deployment is the verified default in this implementation.
    attempts before authorizing new work. Restoring local data cannot prove that an
    external process stopped while the service was offline.
 
-Back up externally managed credential-reference configuration independently. No
-production connector or external secret resolver is supplied in this phase.
+Back up externally managed private connection configuration independently, along
+with the matching connector ledger. Do not assume the private connection file is
+inside `DATA_DIR`. No general external secret resolver is supplied.
+
+## Live deployment state
+
+Keep the actual service origin, current route identifiers, connection-file location
+and supervisor state in protected deployment configuration or the environment
+owner's service registry, not in tracked docs. Run evidence may record what was
+observed at a specific time; it must not serve as the current connection catalog.
+Use the supported service-discovery/status interface after a stop, restart or
+environment recreation. A missing external route does not by itself prove that
+the application process or its persisted work records were deleted.
+
+Durable data volumes and connection mappings must be reattached deliberately.
+If a stable logical URL or automatic service restoration is required, verify the
+environment owner's existing route/supervisor contract rather than hardcoding a
+one-off development URL. Do not repair or restart unrelated sessions as part of
+discovery. See [integration verification](integration-verification.md) for the
+separate disposable-VM boundary around DIM host testing.
 
 ## Recovery rules
 
