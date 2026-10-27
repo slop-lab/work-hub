@@ -98,12 +98,16 @@ export function restoreDirtyForms(root: HTMLElement, identity: string, islands: 
 		const replacement = [...root.querySelectorAll<HTMLFormElement>("form")].find((form) => formKey(form) === island.key);
 		if (replacement === undefined) continue;
 		const controls = formControls(replacement);
+		const restored: EditableControl[] = [];
 		for (const saved of island.controls) {
 			const current = controls.find((item) => item.key === saved.key)?.control;
 			if (current === undefined) continue;
 			current.value = saved.value;
+			if (current instanceof HTMLSelectElement && current.value !== saved.value) current.dataset["restoredValue"] = saved.value;
 			if (current instanceof HTMLInputElement && saved.checked !== undefined) current.checked = saved.checked;
+			restored.push(current);
 		}
+		for (const control of restored) control.dispatchEvent(new Event("change"));
 		if (island.dirty) replacement.dataset["dirty"] = "true";
 		if (island.focus === undefined) continue;
 		const focused = controls.find((item) => item.key === island.focus?.key)?.control;

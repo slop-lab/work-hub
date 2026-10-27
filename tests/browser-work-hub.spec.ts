@@ -79,7 +79,7 @@ test("Given administrator access, when environment and settings forms submit, th
 		await expect(page.getByText("Browser Reviewer")).toBeVisible();
 		await page.getByLabel("Project name").fill("Browser QA project");
 		await page.getByRole("button", { name: "Create project" }).click();
-		await expect(page.getByText("Browser QA project")).toBeVisible();
+		await expect(page.getByText("Browser QA project", { exact: true })).toBeVisible();
 		await page.getByRole("button", { name: "Disable profile" }).first().click();
 		await expect(page.getByText("disabled", { exact: true }).first()).toBeVisible();
 	} finally {
@@ -122,6 +122,7 @@ test("Given no current session, when an existing native session is attached, the
 		await page.getByRole("button", { name: "Add task" }).click();
 		await page.getByRole("link", { name: "Session" }).click();
 		await page.getByLabel("Task context").selectOption({ label: "Observe imported native work" });
+		await page.getByLabel("Runtime profile").selectOption("profile-structured");
 		await expect(page.getByLabel("Requested access")).toHaveValue("observe");
 		await page.getByLabel("Native session ID").fill("native-session-browser-qa");
 		await page.getByRole("button", { name: "Attach without starting work" }).click();
