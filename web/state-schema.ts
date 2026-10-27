@@ -35,7 +35,8 @@ export const environmentSchema = z.object({
 	retiredAt: timestamp.optional(),
 });
 export const installationSchema = z.object({ id, label: z.string(), revision: z.number().int(), kind: z.enum(["execution", "agent_runtime"]), contractMajor: z.number().int(), enabled: z.boolean(), available: z.boolean(), simulator: z.boolean(), reason: z.string() });
-export const referenceSchema = z.object({ id, taskId: id, kind: z.enum(["text", "link"]), title: z.string(), mimeType: z.string(), availability: z.string(), contentRevision: z.string().nullable(), createdAt: timestamp, retainedText: z.string().nullable().optional(), url: z.string().url().nullable().optional() });
+export const referenceSchema = z.object({ id, taskId: id, kind: z.enum(["text", "link"]), title: z.string(), mimeType: z.string(), availability: z.string(), contentRevision: z.string().nullable(), createdAt: timestamp, retainedText: z.string().nullable().optional(), url: z.string().url().nullable().optional(),
+	provenance: z.object({ provider: z.literal("akb"), installationId: id, workspaceId: id, pageId: id, revision: z.number().int().positive(), sourceUpdatedAt: timestamp, retainedByHub: z.boolean() }).optional() });
 export const bindingSchema = z.object({
 	id,
 	generation: z.number().int(),
