@@ -18,10 +18,11 @@ test('browser delegates to actual OpenCode, answers, reconnects and explicitly c
     await page.getByRole('button', { name: 'Sign in' }).click();
     await page.getByRole('link', { name: 'Settings', exact: true }).click();
     await page.getByRole('button', { name: 'Discover connections' }).click();
-    await page.getByLabel('OpenCode agent').selectOption(agent);
+    await page.getByLabel('Runtime profile').selectOption(agent);
     await page.getByLabel('Connected model').selectOption({ label: model });
+    await page.getByLabel('Work Hub project').selectOption('project-default');
     await page.getByRole('button', { name: 'Save execution profile' }).click();
-    await expect(page.getByText(`Disposable native acceptance: ${agent}`, { exact: true })).toBeVisible();
+    await expect(page.getByRole('strong').filter({ hasText: `Disposable native acceptance: ${agent}` })).toBeVisible();
     await page.getByRole('link', { name: 'Backlog', exact: true }).click();
     await page.getByLabel('New task title').fill('Disposable native browser acceptance');
     await page.getByRole('button', { name: 'Add task', exact: true }).click();
