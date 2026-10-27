@@ -3,3 +3,10 @@
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
+
+@media (max-width: 30rem) {
+	.akb-capture__heading {
+		align-items: stretch;
+		flex-direction: column;
+	}
+}
