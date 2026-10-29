@@ -4,6 +4,7 @@ import { InputReceiptSchema } from "../contracts/index.ts";
 import type { InteractionRepository } from "../persistence/interaction-repository.ts";
 import type { OutboxItem } from "../persistence/operation-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
+import type { HandoffRepository } from "../persistence/handoff-repository.ts";
 import type { RuntimeDeliveryWorker } from "./runtime-delivery-worker.ts";
 import type { RuntimeSessionWorker } from "./runtime-session-worker.ts";
 
@@ -13,6 +14,7 @@ export class RuntimeOperationReducer {
     readonly interactions: InteractionRepository;
     readonly delivery: RuntimeDeliveryWorker;
     readonly sessions: RuntimeSessionWorker;
+    readonly handoffs: HandoffRepository;
   };
 
   constructor(input: RuntimeOperationReducer["input"]) {
@@ -24,6 +26,8 @@ export class RuntimeOperationReducer {
       case "runtime.startAttempt": {
         const payload = z.strictObject({ attemptId: z.string() }).passthrough().parse(item.payload);
         const receipt = InputReceiptSchema.parse(result);
+        this.input.handoffs.recordDelivery(item.workspaceId, payload.attemptId,
+          { status: "delivered", receipt });
         if (receipt.nativeExecutionRef !== undefined) {
           this.input.state.saveAttemptNativeExecution(
             item.workspaceId, payload.attemptId, receipt.nativeExecutionRef,
@@ -66,6 +70,8 @@ export class RuntimeOperationReducer {
     switch (item.operationKind) {
       case "runtime.startAttempt": {
         const payload = z.strictObject({ attemptId: z.string() }).passthrough().parse(item.payload);
+        this.input.handoffs.recordDelivery(item.workspaceId, payload.attemptId,
+          { status: "failed", error: receipt });
         this.input.state.finishAttempt(item.workspaceId, payload.attemptId, "failed");
         return;
       }

@@ -1,12 +1,9 @@
 import { z } from "zod";
 
 import {
-  InputSnapshotSchema,
-  type AttemptStart,
   type InstructionInput,
   type OperationReceipt,
   type StopInput,
-  WorkAreaSchema,
 } from "../contracts/index.ts";
 import type { AttemptFactory } from "../persistence/attempt-factory.ts";
 import type { ExecutionRepository } from "../persistence/execution-repository.ts";
@@ -15,23 +12,18 @@ import type { OperationRepository, OutboxItem } from "../persistence/operation-r
 import type { StateRepository } from "../persistence/state-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
 import { digest } from "../persistence/codec.ts";
-import { actionContext, callContext } from "./context.ts";
+import { actionContext } from "./context.ts";
 import type { ConnectorRegistry } from "./connectors.ts";
 import {
   bindingDescriptorSchema, runtimeTarget,
 } from "./runtime-codec.ts";
 import { RuntimeDeliveryWorker } from "./runtime-delivery-worker.ts";
 import { RuntimeSessionWorker } from "./runtime-session-worker.ts";
-import { nativeExecutionTarget, runtimeInputSnapshot, runtimeWorkAreas } from "./runtime-attempt-codec.ts";
+import { nativeExecutionTarget } from "./runtime-attempt-codec.ts";
 import { RuntimeOperationReducer } from "./runtime-operation-reducer.ts";
+import type { HandoffRepository } from "../persistence/handoff-repository.ts";
+import { RuntimeAttemptStart } from "./runtime-attempt-start.ts";
 
-const startSchema = z.strictObject({
-  sessionId: z.string(), attemptId: z.string(),
-  descriptor: bindingDescriptorSchema.optional(),
-  inputSnapshot: InputSnapshotSchema.optional(),
-  input: InputSnapshotSchema.optional(),
-  workAreas: z.array(WorkAreaSchema).default([]),
-});
 export class RuntimeWorker {
   private readonly connectors: ConnectorRegistry;
   private readonly operations: OperationRepository;
@@ -40,17 +32,22 @@ export class RuntimeWorker {
   private readonly delivery: RuntimeDeliveryWorker;
   private readonly sessions: RuntimeSessionWorker;
   private readonly reducer: RuntimeOperationReducer;
+  private readonly attemptStart: RuntimeAttemptStart;
 
   constructor(input: {
     readonly connectors: ConnectorRegistry; readonly operations: OperationRepository;
     readonly state: StateRepository; readonly execution: ExecutionRepository;
     readonly attempts: AttemptFactory; readonly work: WorkRepository;
     readonly interactions: InteractionRepository;
+    readonly handoffs: HandoffRepository;
   }) {
     this.connectors = input.connectors;
     this.operations = input.operations;
     this.state = input.state;
     this.interactions = input.interactions;
+    this.attemptStart = new RuntimeAttemptStart({ connectors: input.connectors,
+      operations: input.operations, state: input.state, handoffs: input.handoffs,
+      enqueueSessionDetach: (item, sessionId) => this.enqueueSessionDetach(item, sessionId) });
     this.delivery = new RuntimeDeliveryWorker(
       input.connectors, input.operations, input.interactions, input.state,
     );
@@ -59,64 +56,12 @@ export class RuntimeWorker {
     );
     this.reducer = new RuntimeOperationReducer({
       state: input.state, interactions: input.interactions,
-      delivery: this.delivery, sessions: this.sessions,
+      delivery: this.delivery, sessions: this.sessions, handoffs: input.handoffs,
     });
   }
 
   async start(item: OutboxItem): Promise<void> {
-    const payload = startSchema.parse(item.payload);
-    if (this.state.stopRequested(item.workspaceId, payload.attemptId)) {
-      this.operations.settleConfirmed(item.id, {
-        status: "confirmed", effect: "attempt.canceled_before_input",
-      }, () => {
-        this.state.finishAttempt(item.workspaceId, payload.attemptId, "canceled");
-        this.enqueueSessionDetach(item, payload.sessionId);
-      });
-      return;
-    }
-    const descriptor = payload.descriptor ?? bindingDescriptorSchema.parse(
-      this.state.runtimeBinding(item.workspaceId, payload.sessionId),
-    );
-    const snapshot = payload.inputSnapshot ?? payload.input;
-    if (snapshot === undefined) throw new TypeError("Attempt start is missing its input snapshot.");
-    const target = {
-      ...runtimeTarget(descriptor, { sessionId: payload.sessionId, generation: 1 }),
-      hubAttemptId: payload.attemptId,
-    };
-    const input: AttemptStart = {
-      target, input: runtimeInputSnapshot(snapshot), workAreas: runtimeWorkAreas(payload.workAreas),
-    };
-    const receipt = await this.connectors.runtime(item.installationId)
-      .startAttempt(actionContext(item, [descriptor.controlGrant.id]), input);
-    if (receipt.status !== "confirmed") {
-      this.settle(item, receipt, () => {}, () => {}, () => {
-        this.state.finishAttempt(item.workspaceId, payload.attemptId, "failed");
-      });
-      return;
-    }
-    const observation = await this.connectors.runtime(item.installationId).inspectSession(
-      callContext(item),
-      runtimeTarget(descriptor, { sessionId: payload.sessionId, generation: item.targetGeneration ?? 1 }),
-    );
-    this.operations.settleConfirmed(item.id, receipt, () => {
-      if (receipt.result.nativeExecutionRef !== undefined) {
-        this.state.saveAttemptNativeExecution(
-          item.workspaceId, payload.attemptId, receipt.result.nativeExecutionRef,
-        );
-      }
-      switch (observation.value.execution.phase) {
-        case "running":
-          this.state.setAttemptPhase(item.workspaceId, payload.attemptId, "running");
-          return;
-        case "waiting_input":
-          this.state.setAttemptPhase(item.workspaceId, payload.attemptId, "waiting_input");
-          return;
-        case "idle":
-        case "unknown":
-        case "ended":
-          return;
-      }
-    });
+    await this.attemptStart.run(item);
   }
 
   async instruct(item: OutboxItem): Promise<void> {
