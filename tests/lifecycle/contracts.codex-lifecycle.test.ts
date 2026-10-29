@@ -68,6 +68,55 @@ test('Codex notifications expose exact turn, tool, retry and rate lifecycle meta
   } finally { await fixture.close(); }
 });
 
+test('polling one Codex session preserves another session question', async () => {
+  const fixture = codexFixture();
+  try {
+    await fixture.open();
+    await fixture.connector.startAttempt(codexContext('start'), fixture.input);
+    const secondThreadId = '01900000-0000-7000-8000-000000000003';
+    const secondTurnId = '01900000-0000-7000-8000-000000000004';
+    fixture.protocol.threads.set(secondThreadId, {
+      id: secondThreadId, sessionId: secondThreadId, ephemeral: false, cwd: '/fixture', modelProvider: 'openai',
+      model: 'fixture-model', cliVersion: '0.164.0', status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
+      createdAt: 1, updatedAt: 1, turns: [{ id: secondTurnId, status: 'inProgress', startedAt: 2,
+        completedAt: null, error: null, items: [] }],
+    });
+    fixture.connector.state.save(codexContext('bind-second'), 'logical-second', {
+      workspaceId: 'hub', nativeId: secondThreadId, mode: 'control', selection: {
+        agent: 'codex', model: { providerID: 'openai', modelID: 'fixture-model' }, projectId: 'project-default',
+      }, detached: false, environmentGrant: null, ownedInputs: [],
+      attempt: { id: 'attempt-second', taskId: 'task-second', turnId: secondTurnId, generation: 1 },
+    });
+    const secondTarget = { hubSessionId: 'logical-second', hubAttemptId: 'attempt-second', bindingGeneration: 1,
+      controlGrantRef: 'codex:logical-second', nativeSession: fixture.connector.state.reference('agent-thread', secondThreadId) };
+    const question = (threadId: string, turnId: string) => ({ threadId, turnId, itemId: `question-${turnId}`,
+      questions: [{ id: 'question-1', header: 'Choice', question: 'Pick one', isOther: false, isSecret: false,
+        options: [{ label: 'Alpha', description: 'First' }] }], isBlocking: true, autoResolutionMs: null });
+    fixture.protocol.queueServerRequest({ method: 'item/tool/requestUserInput',
+      params: question(fixture.target.nativeSession.id, '01900000-0000-7000-8000-000000000002'), nativeRequestId: 'question-first' });
+    fixture.protocol.queueServerRequest({ method: 'item/tool/requestUserInput',
+      params: question(secondThreadId, secondTurnId), nativeRequestId: 'question-second' });
+    fixture.protocol.events.push(
+      { method: 'turn/started', params: { threadId: secondThreadId, turn: { id: secondTurnId, status: 'inProgress',
+        startedAt: 2, completedAt: null, error: null, items: [] } } },
+      { method: 'error', params: { threadId: secondThreadId, turnId: secondTurnId, willRetry: true,
+        error: { message: 'retry', codexErrorInfo: 'serverOverloaded', additionalDetails: null, misalignment: null } } },
+    );
+
+    const firstEvents = [];
+    for await (const event of fixture.connector.subscribe(codexContext('poll-first'), { target: fixture.target })) firstEvents.push(event);
+    const secondEvents = [];
+    for await (const event of fixture.connector.subscribe(codexContext('poll-second'), { target: secondTarget })) secondEvents.push(event);
+
+    assert.equal(firstEvents.find((event) => event.payload.type === 'request.created')?.payload.type, 'request.created');
+    const secondQuestion = secondEvents.find((event) => event.payload.type === 'request.created');
+    assert.equal(secondQuestion?.payload.type, 'request.created');
+    if (secondQuestion?.payload.type === 'request.created') assert.equal(secondQuestion.payload.request.nativeRequestRef.id, 'question-second');
+    assert.deepEqual(secondEvents.flatMap((event) => event.payload.type === 'extension' ? [event.payload.data['kind']] : []),
+      ['turn_started', 'retry_observed']);
+  } finally { await fixture.close(); }
+});
+
 test('Codex maps one non-secret native question and delivers its exact JSON-RPC answer', async () => {
   const fixture = codexFixture();
   try {

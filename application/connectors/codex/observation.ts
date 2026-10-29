@@ -202,7 +202,7 @@ export class CodexObservation {
     const attempt = binding.attempt;
     if (!attempt) return;
     let pendingQuestion = false;
-    for (const event of this.protocol.drainEvents()) {
+    for (const event of this.protocol.drainEvents(binding.nativeId)) {
       const question = nativeQuestion(this.state, binding, target, event);
       if (question !== undefined) { pendingQuestion = true; yield question; continue; }
       if (event.method === 'workhub/serverRequestUnsupported') {
