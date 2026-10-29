@@ -19,7 +19,9 @@ async function mappedFixture() {
   const input: OpenSessionInput = { hubSessionId: 'logical', mode: 'create', sessionLaunchOwner: 'runtime_connector',
     requestedControl: 'control', configuration: selection, route: { kind: 'environment', attachment, route } };
   const authorized = { ...context('open'), authorizedGrantRefs: ['use-grant', 'opencode:logical'] };
-  return { ...fixture, connector, attachment, area, openInput: input, authorized };
+  const target = { ...fixture.target, nativeSession: connector.state.reference('agent-session', 'ses_fixture') };
+  return { ...fixture, connector, attachment, area, openInput: input, authorized, target,
+    input: { ...fixture.input, target } };
 }
 
 test('mapped OpenCode opening requires the selected environment grant and exact route membership', async () => {
