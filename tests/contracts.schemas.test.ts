@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ActionContextSchema, AllocationRequestSchema, ConnectorReceiptDispatchError, OperationSafetySchema, RuntimeEventSchema, validateSerializedOperationReceipt, parseSerializedOperationReceipt } from "../application/contracts/index.ts";
+import { ActionContextSchema, AllocationRequestSchema, ConnectorReceiptDispatchError, OperationSafetySchema, RuntimeEventSchema, RuntimeSessionObservationSchema, validateSerializedOperationReceipt, parseSerializedOperationReceipt } from "../application/contracts/index.ts";
 
 test("closed action context rejects unknown fields", () => {
   assert.equal(ActionContextSchema.safeParse({
@@ -14,6 +14,20 @@ test("closed allocation request rejects hidden provider fields", () => {
     taskId: "t", sessionId: "s", attemptId: "a", externalProfileRef: "small", parameters: {},
     releasePolicyRef: "retain", workAreas: [], allowedPreparationEffects: [], shell: "rm -rf /",
   }).success, false);
+});
+
+test("runtime activity preserves exact parent-child identity and incomplete coverage", () => {
+  const nativeSession = { installationId: "runtime-one", providerScope: "workspace-one",
+    kind: "agent-session", id: "ses_main", incarnation: "incarnation-one" };
+  const parsed = RuntimeSessionObservationSchema.parse({ nativeSession, exists: true,
+    execution: { phase: "ended", pendingNativeRequestRefs: [] }, controlGrantValid: true,
+    limitations: [], activity: { coverage: "partial", truncated: true, nodes: [
+      { nativeSession, relation: "root", phase: "idle" },
+      { nativeSession: { ...nativeSession, id: "ses_child" }, parentNativeSession: nativeSession,
+        relation: "descendant", phase: "waiting_input" },
+    ] } });
+  assert.equal(parsed.activity?.coverage, "partial");
+  assert.equal(parsed.activity?.nodes[1]?.parentNativeSession?.id, "ses_main");
 });
 
 test("serialized receipt dispatch rejects an unrecognized status", () => {

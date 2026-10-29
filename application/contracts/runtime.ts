@@ -3,6 +3,7 @@ import type { AccessHandleRef, ActionContext, CallContext, Capability, Connector
 import { AccessHandleRefSchema, CapabilitySchema, DigestSchema, JsonObjectSchema, NativeRefSchema, TimestampSchema } from "./common.ts";
 import type { EnvironmentAttachment, ResourceIdentity, WorkArea } from "./execution.ts";
 import { EnvironmentAttachmentSchema, ResourceIdentitySchema, WorkAreaSchema } from "./execution.ts";
+import { VerificationEnvelopeSchema, type VerificationEnvelope } from "./handoff.ts";
 
 export interface RuntimeCapabilities {
   readonly servicePreparation: Capability; readonly controlTransfer: Capability; readonly createSession: Capability; readonly attachSession: Capability;
@@ -19,7 +20,8 @@ export interface RuntimeBindingDescriptor { readonly nativeSession: NativeRef; r
 export type OpenSessionInput = { readonly hubSessionId: Id; readonly route: RuntimeRoute; readonly configuration: JsonObject; readonly requestedControl: "observe" | "control" } & ({ readonly mode: "create"; readonly sessionLaunchOwner: "runtime_connector" } | { readonly mode: "attach"; readonly nativeSession: NativeRef; readonly sessionLaunchOwner: "external" | "execution_provider" | "runtime_connector" });
 export interface InputSnapshot {
   readonly id: Id; readonly digest: Digest; readonly taskId: Id; readonly taskRevision: Revision; readonly profileId: Id; readonly profileRevision: Revision; readonly instruction: string; readonly selectedReferenceIds: readonly Id[]; readonly selectedResponseIds: readonly Id[];
-  readonly contextItems: readonly { readonly sourceId: Id; readonly sourceRevision?: Revision; readonly includedText?: string; readonly retainedContentRef?: Id; readonly omissionReason?: string }[]; readonly authorizedEffectKinds: readonly string[]; readonly assembledAt: Timestamp }
+  readonly contextItems: readonly { readonly sourceId: Id; readonly sourceRevision?: Revision; readonly includedText?: string; readonly retainedContentRef?: Id; readonly omissionReason?: string }[]; readonly authorizedEffectKinds: readonly string[]; readonly assembledAt: Timestamp;
+  readonly verification?: VerificationEnvelope; readonly promptDigest?: Digest }
 export interface RuntimeTarget { readonly hubSessionId: Id; readonly nativeSession: NativeRef; readonly bindingGeneration: number; readonly controlGrantRef: Id }
 export interface AttemptTarget extends RuntimeTarget { readonly hubAttemptId: Id; readonly nativeExecutionRef?: NativeRef }
 export interface AttemptStart { readonly target: AttemptTarget; readonly input: InputSnapshot; readonly workAreas: readonly WorkArea[]; readonly bridgeAccessHandle?: AccessHandleRef }
@@ -33,7 +35,25 @@ export interface RequestDraft { readonly kind: "question" | "approval"; readonly
 export interface NativeRequestEvent { readonly nativeRequestRef: NativeRef; readonly nativeRequestRevision?: string; readonly draft: RequestDraft; readonly responseRoute: "native" | "bridge" }
 export interface ResponseDelivery { readonly target: AttemptTarget; readonly requestId: Id; readonly requestRevision: Revision; readonly responseId: Id; readonly responseDigest: Digest; readonly nativeRequestRef: NativeRef; readonly answer: Answer; readonly validity: RequestValidity }
 export interface ExecutionObservation { readonly nativeExecutionRef?: NativeRef; readonly hubAttemptId?: Id; readonly phase: "idle" | "running" | "waiting_input" | "ended" | "unknown"; readonly termination?: "completed" | "stopped" | "failed" | "unknown"; readonly startedAt?: Timestamp; readonly endedAt?: Timestamp; readonly pendingNativeRequestRefs: readonly NativeRef[] }
-export interface RuntimeSessionObservation { readonly nativeSession: NativeRef; readonly exists: boolean | "unknown"; readonly execution: ExecutionObservation; readonly controlGrantValid: boolean | "unknown"; readonly historyCursor?: Cursor; readonly limitations: readonly string[] }
+export type RuntimeActivityNode = {
+  readonly nativeSession: NativeRef; readonly parentNativeSession?: NativeRef;
+  readonly relation: "root" | "descendant";
+  readonly phase: "idle" | "running" | "waiting_input" | "unknown";
+};
+export type RuntimeActivityObservation = {
+  readonly coverage: "complete" | "partial" | "unknown";
+  readonly nodes: readonly RuntimeActivityNode[]; readonly truncated: boolean;
+};
+export interface RuntimeSessionObservation { readonly nativeSession: NativeRef; readonly exists: boolean | "unknown"; readonly execution: ExecutionObservation; readonly controlGrantValid: boolean | "unknown"; readonly historyCursor?: Cursor; readonly limitations: readonly string[]; readonly activity?: RuntimeActivityObservation }
+export const RuntimeActivityNodeSchema = z.strictObject({
+  nativeSession: NativeRefSchema, parentNativeSession: NativeRefSchema.optional(),
+  relation: z.enum(["root", "descendant"]),
+  phase: z.enum(["idle", "running", "waiting_input", "unknown"]),
+});
+export const RuntimeActivityObservationSchema = z.strictObject({
+  coverage: z.enum(["complete", "partial", "unknown"]),
+  nodes: z.array(RuntimeActivityNodeSchema).max(32), truncated: z.boolean(),
+});
 export interface OutputItem { readonly sourceItemId?: string | undefined; readonly nativeExecutionRef?: NativeRef | undefined; readonly hubAttemptId?: Id | undefined; readonly kind: "message" | "log" | "status_note" | "reference" | "gap"; readonly role?: "user" | "agent" | "runtime" | undefined; readonly text?: string | undefined; readonly referenceId?: Id | undefined; readonly partial?: boolean | undefined; readonly observedAt: Timestamp; readonly extensions?: JsonObject | undefined }
 export interface OutputPage { readonly items: readonly OutputItem[]; readonly nextCursor?: Cursor; readonly coverage: "complete_available" | "partial" | "live_only"; readonly gaps: readonly { readonly reason: string; readonly fromCursor?: Cursor; readonly toCursor?: Cursor }[] }
 export type RuntimeEventPayload = { readonly type: "output"; readonly item: OutputItem } | { readonly type: "execution.observed"; readonly observation: ExecutionObservation } | { readonly type: "request.created"; readonly request: NativeRequestEvent }
@@ -54,7 +74,8 @@ export const RuntimeRouteSchema = z.discriminatedUnion("kind", [z.strictObject({
 const OpenSessionBaseShape = { hubSessionId: z.string(), route: RuntimeRouteSchema, configuration: JsonObjectSchema, requestedControl: z.enum(["observe", "control"]) };
 export const OpenSessionInputSchema = z.discriminatedUnion("mode", [z.strictObject({ ...OpenSessionBaseShape, mode: z.literal("create"), sessionLaunchOwner: z.literal("runtime_connector") }), z.strictObject({ ...OpenSessionBaseShape, mode: z.literal("attach"), nativeSession: NativeRefSchema, sessionLaunchOwner: z.enum(["external", "execution_provider", "runtime_connector"]) })]);
 export const InputSnapshotSchema = z.strictObject({ id: z.string(), digest: DigestSchema, taskId: z.string(), taskRevision: z.number().int(), profileId: z.string(), profileRevision: z.number().int(), instruction: z.string(), selectedReferenceIds: z.array(z.string()), selectedResponseIds: z.array(z.string()),
-  contextItems: z.array(z.strictObject({ sourceId: z.string(), sourceRevision: z.number().int().optional(), includedText: z.string().optional(), retainedContentRef: z.string().optional(), omissionReason: z.string().optional() })), authorizedEffectKinds: z.array(z.string()), assembledAt: TimestampSchema });
+  contextItems: z.array(z.strictObject({ sourceId: z.string(), sourceRevision: z.number().int().optional(), includedText: z.string().optional(), retainedContentRef: z.string().optional(), omissionReason: z.string().optional() })), authorizedEffectKinds: z.array(z.string()), assembledAt: TimestampSchema,
+  verification: VerificationEnvelopeSchema.optional(), promptDigest: DigestSchema.optional() });
 export const AttemptStartSchema = z.strictObject({ target: AttemptTargetSchema, input: InputSnapshotSchema, workAreas: z.array(WorkAreaSchema), bridgeAccessHandle: AccessHandleRefSchema.optional() });
 export const InstructionInputSchema = z.strictObject({ target: AttemptTargetSchema, text: z.string(), referenceIds: z.array(z.string()), mode: z.enum(["immediate", "runtime_queued"]) });
 export const InputReceiptSchema = z.strictObject({ nativeInputRef: NativeRefSchema.optional(), nativeExecutionRef: NativeRefSchema.optional(), acceptance: z.enum(["received", "queued"]) });
@@ -67,7 +88,7 @@ export const RequestDraftSchema = z.strictObject({ kind: z.enum(["question", "ap
 export const NativeRequestEventSchema = z.strictObject({ nativeRequestRef: NativeRefSchema, nativeRequestRevision: z.string().optional(), draft: RequestDraftSchema, responseRoute: z.enum(["native", "bridge"]) });
 export const ResponseDeliverySchema = z.strictObject({ target: AttemptTargetSchema, requestId: z.string(), requestRevision: z.number().int().nonnegative(), responseId: z.string(), responseDigest: DigestSchema, nativeRequestRef: NativeRefSchema, answer: AnswerValueSchema, validity: RequestValiditySchema });
 export const ExecutionObservationSchema = z.strictObject({ nativeExecutionRef: NativeRefSchema.optional(), hubAttemptId: z.string().optional(), phase: z.enum(["idle", "running", "waiting_input", "ended", "unknown"]), termination: z.enum(["completed", "stopped", "failed", "unknown"]).optional(), startedAt: TimestampSchema.optional(), endedAt: TimestampSchema.optional(), pendingNativeRequestRefs: z.array(NativeRefSchema) });
-export const RuntimeSessionObservationSchema = z.strictObject({ nativeSession: NativeRefSchema, exists: z.union([z.boolean(), z.literal("unknown")]), execution: ExecutionObservationSchema, controlGrantValid: z.union([z.boolean(), z.literal("unknown")]), historyCursor: z.string().optional(), limitations: z.array(z.string()) });
+export const RuntimeSessionObservationSchema = z.strictObject({ nativeSession: NativeRefSchema, exists: z.union([z.boolean(), z.literal("unknown")]), execution: ExecutionObservationSchema, controlGrantValid: z.union([z.boolean(), z.literal("unknown")]), historyCursor: z.string().optional(), limitations: z.array(z.string()), activity: RuntimeActivityObservationSchema.optional() });
 export const OutputItemSchema = z.strictObject({ sourceItemId: z.string().optional(), nativeExecutionRef: NativeRefSchema.optional(), hubAttemptId: z.string().optional(), kind: z.enum(["message", "log", "status_note", "reference", "gap"]), role: z.enum(["user", "agent", "runtime"]).optional(), text: z.string().optional(), referenceId: z.string().optional(), partial: z.boolean().optional(), observedAt: TimestampSchema, extensions: JsonObjectSchema.optional() });
 export const OutputPageSchema = z.strictObject({ items: z.array(OutputItemSchema), nextCursor: z.string().optional(), coverage: z.enum(["complete_available", "partial", "live_only"]), gaps: z.array(z.strictObject({ reason: z.string(), fromCursor: z.string().optional(), toCursor: z.string().optional() })) });
 export const RuntimeEventPayloadSchema = z.discriminatedUnion("type", [z.strictObject({ type: z.literal("output"), item: OutputItemSchema }), z.strictObject({ type: z.literal("execution.observed"), observation: ExecutionObservationSchema }), z.strictObject({ type: z.literal("request.created"), request: NativeRequestEventSchema }),
