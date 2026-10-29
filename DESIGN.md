@@ -170,6 +170,17 @@ Base unit: 4px.
 - **Structure:** completion note, explicit active-execution decision, complete/cancel/reopen/archive actions.
 - **Safety:** task state never implies stop, session close, detach, or release.
 
+### Handoff Workspace
+- **Route:** `#/backlog/:taskId/handoff/:attemptId`; the attempt identifier is durable backend identity, not browser draft identity.
+- **Structure:** source snapshot, repository revision and validation request, recipient/session choice, canonical prompt preview, delivery ledger, parent/child activity, verification result, follow-up, and human decision.
+- **Selection:** repository and recipient session are always explicit. Multiple project repositories remain visible with branch, full commit, validation request, and context references; no first-session or hidden-default selection.
+- **Preview states:** incomplete, ready, stale, and rejected. Ready preview exposes the exact canonical prompt, target identity and incarnation, authority, readiness, and digest before first send.
+- **Delivery states:** pending, delivered, acknowledged, failed, and unknown are rendered independently from execution activity. Retry reconciles or reuses the original command and never asks for credentials or creates a replacement attempt identity.
+- **Activity states:** parent and child activity show observing, active, waiting, finished, stale, and unknown without reducing agent-finished to task success.
+- **Result states:** passed, failed, partial, and blocked. Every verification entry shows source, environment, context status, and retained provenance rather than a summary-only success treatment.
+- **Completion:** revision, continuation, Git/CI evidence, AKB context acceptance, and human task completion remain separate controls and facts.
+- **Responsive layout:** desktop uses a main decision column plus the context rail; tablet moves the rail below; mobile preserves source-to-recipient order in one column with no horizontal prompt or identifier overflow.
+
 ### Connector Picker
 - **Structure:** enabled and available connector installations only; no hidden fallback value.
 - **States:** available simulator/connector, none available with disabled submit, unavailable registration history.
