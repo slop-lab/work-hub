@@ -74,6 +74,11 @@ test("Given exact source and recipient input, when preview becomes stale, then t
 		await expect(prompt.locator("pre")).toHaveText(preview.prompt);
 		await expect(prompt.getByText(preview.promptDigest, { exact: true })).toBeVisible();
 		await expect(prompt.getByText(preview.previewDigest, { exact: true })).toBeVisible();
+		for (const width of [375, 768, 1280] as const) {
+			await page.setViewportSize({ width, height: 900 });
+			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
+			await dialog.screenshot({ path: `.omo/evidence/handoff/preview-${width}.png` });
+		}
 
 		await app.hub.execute(admin, { commandId: "browser-handoff-stale-task", type: "task.update", target: { kind: "task", id: taskId }, expected: { task: app.hub.getTask(admin, taskId).revision }, payload: { description: "Changed after preview" } });
 		await dialog.getByRole("button", { name: "Send verification handoff" }).click();
