@@ -36,7 +36,7 @@ export function resultSection(ctx: UiContext, task: HubTask, results: UiContext[
 			el(
 				"article",
 				{ class: "result-card" },
-				el("p", { class: "result-summary" }, result.summary),
+				el("div", { class: "section-heading" }, el("p", { class: "result-summary" }, result.summary), result.outcome === undefined ? null : el("span", { class: `badge badge--${result.outcome === "passed" ? "success" : result.outcome === "failed" || result.outcome === "blocked" ? "error" : "warning"}` }, result.outcome)),
 				resultProvenance(ctx, result),
 				result.limitations.length === 0 ? null : el("div", { class: "boundary-note" }, el("strong", {}, "Known limitations"), el("p", {}, result.limitations.join(" "))),
 				target.kind === "unavailable" ? el("p", { class: "muted" }, target.reason) : null,
@@ -50,11 +50,21 @@ export function resultSection(ctx: UiContext, task: HubTask, results: UiContext[
 
 function resultProvenance(ctx: UiContext, result: HubResult): HTMLElement {
 	const attempt = ctx.state.attempts.find((item) => item.id === result.attemptId);
+	const binding = attempt === undefined ? undefined : ctx.state.environmentBindings.find((item) => item.sessionId === attempt.sessionId);
 	const author = ctx.state.users.find((user) => user.id === result.authorId)?.displayName ?? result.authorId;
 	const evidenceLabels = { agent_claim: 'Agent claim', runtime_observation: 'Runtime observation', external_check: 'External check', human_assertion: 'Human assertion' } as const;
 	const provenance = el('div', { class: 'stack' },
 		el('p', { class: 'muted' }, `Submitted by ${author} · ${result.submittedAt}`),
-		el('p', { class: 'mono' }, `Attempt ${result.attemptId} · Session ${attempt?.sessionId ?? 'Unavailable'}`));
+		el('p', { class: 'mono' }, `Attempt ${result.attemptId} · Session ${attempt?.sessionId ?? 'Unavailable'}`),
+		result.outcome === undefined ? null : el('dl', { class: 'definition-list result-verification' },
+			el('dt', {}, 'Verification outcome'), el('dd', {}, result.outcome),
+			el('dt', {}, 'Source commit'), el('dd', { class: 'mono' }, result.binding?.sourceCommit ?? 'Unavailable'),
+			el('dt', {}, 'Input digest'), el('dd', { class: 'mono' }, result.binding?.inputDigest ?? 'Unavailable'),
+			el('dt', {}, 'Context digest'), el('dd', { class: 'mono' }, result.binding?.contextDigest ?? 'Unavailable'),
+			el('dt', {}, 'Target digest'), el('dd', { class: 'mono' }, result.binding?.targetDigest ?? 'Unavailable'),
+			el('dt', {}, 'Environment status'), el('dd', {}, binding === undefined ? 'No hub-managed environment' : `${binding.state} · generation ${binding.generation}`),
+			el('dt', {}, 'Context status'), el('dd', {}, result.binding === undefined ? 'Not supplied' : 'Bound to retained attempt input'),
+		));
 	if (result.evidence.length === 0) provenance.append(el('p', { class: 'muted' }, 'No supporting evidence recorded. A submitted result is not proof of completion.'));
 	for (const evidence of result.evidence) provenance.append(el('div', {},
 		el('strong', {}, evidenceLabels[evidence.origin]), el('p', { class: 'captured-text' }, evidence.detail)));
