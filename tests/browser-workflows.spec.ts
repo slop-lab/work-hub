@@ -100,7 +100,7 @@ test("Given a task, when task fields, comment, and a formal question are submitt
 		await page.getByRole("link", { name: "Backlog" }).click();
 		await page.getByRole("button", { name: "Open Exercise durable task forms" }).click();
 		await page.reload();
-		await expect(page.getByLabel("Description")).toHaveValue("Persist every explicit form action.");
+		await expect(page.getByRole("textbox", { name: "Description", exact: true })).toHaveValue("Persist every explicit form action.");
 		await expect(page.getByText("Comment persisted through the application command service.")).toBeVisible();
 		await expect(page.getByText("Which release should carry this change?").first()).toBeVisible();
 		await expect(page.getByText("The next minor release.")).toBeVisible();

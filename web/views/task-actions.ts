@@ -1,12 +1,12 @@
 import { commandId } from "../api.ts";
 import { button, el, findFormValue, label } from "../dom.ts";
+import { loadTaskLifecycle } from "../lifecycle-api.ts";
 import type { HubTask } from "../state-schema.ts";
 import type { UiContext } from "../ui-context.ts";
 
 export function taskActions(ctx: UiContext, task: HubTask): HTMLElement {
 	const note = el("textarea", { class: "textarea", name: "completionNote", rows: "3", placeholder: "Record the human decision" });
   const hasActiveWork = ctx.state.attempts.some((attempt) => attempt.id === task.primaryAttemptId && attempt.phase !== 'finished');
-	const hasLifecycleWork = task.scopeRevision > 0;
   const execution = el("select", { class: "select", name: "activeExecutionDecision", required: hasActiveWork }, el('option', { value: '' }, 'Choose execution consequence'), el("option", { value: "allow_to_continue" }, "Allow active execution to continue"), el("option", { value: "request_stop" }, "Request stop separately"));
   const executionField = label('If execution is active', execution);
   executionField.hidden = !hasActiveWork;
@@ -15,8 +15,15 @@ export function taskActions(ctx: UiContext, task: HubTask): HTMLElement {
 	if (task.status === "done" || task.status === "canceled") {
 		actions.append(button("Reopen to backlog", "secondary", () => void setStatus(ctx, task, form, "backlog")));
 	} else {
-		if (!hasLifecycleWork) actions.append(button("Complete task", "primary", () => void setStatus(ctx, task, form, "done")));
-		else form.append(el("p", { class: "muted" }, "Execution results are accepted only in Reliable lifecycle. Acceptance does not stop the attempt."));
+		const complete = button("Complete task", "primary", () => void setStatus(ctx, task, form, "done"));
+		actions.append(complete);
+		void loadTaskLifecycle(task.id).then((lifecycle) => {
+			if (!form.isConnected || lifecycle.criteria.length === 0) return;
+			complete.remove();
+			actions.before(el("p", { class: "muted" }, "Tasks with explicit criteria are completed through Reliable lifecycle acceptance. Acceptance does not stop the attempt."));
+		}).catch((error: unknown) => {
+			if (form.isConnected) actions.before(el("p", { class: "limitation", role: "status" }, error instanceof Error ? error.message : "Lifecycle completion rules are unavailable."));
+		});
 		actions.append(button("Cancel task", "danger", () => void setStatus(ctx, task, form, "canceled")));
 	}
 	actions.append(button("Archive task", "quiet", () => void ctx.command({ commandId: commandId(), type: "task.archive", target: { kind: "task", id: task.id }, expected: { task: task.revision }, payload: { reason: findFormValue(form, "completionNote") || undefined } }, "Task archived. History remains available.")));
