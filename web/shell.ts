@@ -35,7 +35,7 @@ function trackActiveNavLink(link: HTMLAnchorElement): void {
 }
 
 export function appShell(state: HubState, route: Route, content: HTMLElement, onLogout: EventListener): HTMLElement {
-	const active = route.kind;
+	const active = route.kind === "handoff" ? "backlog" : route.kind;
 	activeNavLink = undefined;
 	const nav = el("nav", {
 		class: "app-nav",

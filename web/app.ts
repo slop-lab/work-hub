@@ -13,6 +13,7 @@ import { operationView } from "./views/operation.ts";
 import { settingsView } from "./views/settings.ts";
 import { showcaseView } from "./views/showcase.ts";
 import { clearConnectionInventory } from './views/connections.ts';
+import { handoffView } from "./views/handoff.ts";
 
 function requireRoot(): HTMLElement {
 	const value = document.querySelector<HTMLElement>("#app");
@@ -97,6 +98,7 @@ async function backgroundRefresh(): Promise<void> {
 
 function refreshIdentity(route: Route, current: HubState): string {
 	if (route.kind === "backlog") return `backlog:${route.taskId ?? "list"}`;
+	if (route.kind === "handoff") return `handoff:${route.taskId}:${route.attemptId}`;
 	if (route.kind !== "session") return route.kind;
 	const session = route.sessionId === undefined ? current.sessions[0] : current.sessions.find((item) => item.id === route.sessionId);
 	if (session === undefined) return "session:none";
@@ -112,6 +114,8 @@ function contentFor(route: Route, ctx: UiContext): HTMLElement {
 			return dashboardView(ctx);
 		case "backlog":
 			return backlogView(ctx, route.taskId);
+		case "handoff":
+			return handoffView(ctx, route.taskId, route.attemptId);
 		case "session":
 			return sessionView(ctx, route.sessionId);
 		case "operation":
