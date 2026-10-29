@@ -87,6 +87,8 @@ export const attemptSchema = z.object({
 	inputSnapshot: z.record(z.string(), z.unknown()).default({}),
 	predecessorId: idSchema.optional(),
 	unresolved: z.boolean().default(false),
+	retryOrdinal: z.number().int().nonnegative().default(0),
+	retryLimit: z.number().int().nonnegative().default(0),
 	origin: z.string(),
 	role: z.enum(["primary", "observed"]),
 	stopRequestedAt: timestampSchema.optional(),

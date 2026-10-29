@@ -40,13 +40,29 @@ function reconcileForm(ctx: UiContext, task: HubTask, attemptId: string): HTMLEl
 }
 
 function recoveryForm(ctx: UiContext, task: HubTask, attempt: LifecycleAttempt): HTMLElement {
-	const action = select("action", [["resume", "Resume same work"], ["retry", "Bounded retry"], ["escalated", "Escalate without retry"]]);
+	const retryExhausted = attempt.retry.ordinal > 0 && attempt.retry.ordinal >= attempt.retry.limit;
+	const action = select("action", [["resume", "Resume same work"], ...(retryExhausted ? [] : [["retry", "Bounded retry"]] as const), ["escalated", "Escalate without retry"]]);
 	const reason = el("textarea", { class: "textarea", name: "reason", rows: "2", required: true });
 	const limit = el("input", { class: "input", name: "retryLimit", type: "number", min: "0", max: "20", value: String(Math.max(attempt.retry.limit, 1)), required: true });
-	const form = el("form", { class: "lifecycle-inline-form", "data-form-key": `lifecycle-recovery:${task.id}:${attempt.id}` }, label("Recovery action", action), label("Recovery reason", reason), label("Retry limit", limit, "The service rejects retries beyond this retained budget."), submitButton("Controlled recovery", "secondary"));
+	limit.readOnly = attempt.retry.ordinal > 0;
+	const limitHelp = attempt.retry.ordinal > 0
+		? "The retry budget is retained from the first retry."
+		: "The service rejects retries beyond this retained budget.";
+	const exhausted = retryExhausted
+		? el("p", { class: "limitation" }, `Retry budget exhausted at ${attempt.retry.ordinal} of ${attempt.retry.limit}. Resume or escalate instead.`)
+		: null;
+	const form = el(
+		"form",
+		{ class: "lifecycle-inline-form", "data-form-key": `lifecycle-recovery:${task.id}:${attempt.id}` },
+		label("Recovery action", action),
+		label("Recovery reason", reason),
+		label("Retry limit", limit, limitHelp),
+		exhausted,
+		submitButton("Controlled recovery", "secondary"),
+	);
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
-		void ctx.command({ commandId: commandId(), type: "attempt.controlledResume", target: { kind: "attempt", id: attempt.id }, payload: { recovery: action.value, reason: findFormValue(form, "reason"), retryLimit: Number(findFormValue(form, "retryLimit")) } }, "Controlled recovery recorded against the same attempt.");
+		void ctx.command({ commandId: commandId(), type: "attempt.controlledResume", target: { kind: "attempt", id: attempt.id }, payload: { recovery: action.value, reason: findFormValue(form, "reason"), retryLimit: Number(findFormValue(form, "retryLimit")) } }, "Controlled recovery started with retained attempt linkage.");
 	});
 	return el("details", { class: "lifecycle-disclosure", open: true }, el("summary", {}, "Controlled recovery options"), form);
 }

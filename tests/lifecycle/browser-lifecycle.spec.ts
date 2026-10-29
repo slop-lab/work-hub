@@ -62,12 +62,20 @@ test("Given amended criteria and checkpoint then final results, when the owner r
 		await expect(lifecycle).toContainText("result author");
 
 		const corrected = await app.hub.execute(admin, {
+			commandId: "browser-lifecycle-verification-reference",
+			type: "reference.create",
+			target: { kind: "task", id: taskId },
+			payload: { kind: "text", title: "Focused browser evidence", content: "Playwright lifecycle journey passed." },
+		});
+		const verificationReferenceId = corrected.objectRefs[0]?.id;
+		if (verificationReferenceId === undefined) throw new TypeError("Verification reference missing");
+		const correctedResult = await app.hub.execute(admin, {
 			commandId: "browser-lifecycle-final-corrected",
 			type: "result.submit",
 			target: { kind: "attempt", id: attempt.id },
-			payload: { kind: "final", summary: "Focused browser journey passed", limitations: [], referenceIds: [], evidence: [{ origin: "external_check", detail: "Playwright lifecycle journey passed." }], criterionEvidence: [{ criterionId, status: "satisfied", detail: "Focused browser journey passed.", referenceIds: [] }] },
+			payload: { kind: "final", summary: "Focused browser journey passed", limitations: [], referenceIds: [verificationReferenceId], evidence: [{ origin: "external_check", detail: "Playwright lifecycle journey passed." }], criterionEvidence: [{ criterionId, status: "satisfied", detail: "Focused browser journey passed.", referenceIds: [verificationReferenceId] }] },
 		});
-		expect(corrected.status).toBe("confirmed");
+		expect(correctedResult.status).toBe("confirmed");
 		await page.reload();
 		await expect(lifecycle).toContainText("1 of 1 required criteria satisfied");
 		for (const width of [375, 768, 1280] as const) {
@@ -135,15 +143,26 @@ test("Given a blocker and an interrupted handoff attempt, when it is rechecked a
 		await lifecycle.getByLabel("Observation action").selectOption("reconcile");
 		await lifecycle.getByLabel("Reconciliation note").fill("Provider reported a transient failure.");
 		await lifecycle.getByRole("button", { name: "Record interruption" }).click();
+		const predecessor = app.hub.snapshot(admin).attempts.find((candidate) => candidate.id === attemptId);
+		if (predecessor === undefined) throw new TypeError("Recovery predecessor missing");
+		await finishAttempt(app.hub, predecessor, "failed");
+		await page.reload();
 		await lifecycle.getByLabel("Recovery action").selectOption("retry");
 		await lifecycle.getByLabel("Recovery reason").fill("Retry after fixture publication.");
 		await lifecycle.getByLabel("Retry limit").fill("1");
 		await lifecycle.getByRole("button", { name: "Controlled recovery" }).click();
 		await expect(lifecycle).toContainText("Retry 1 of 1");
-		await lifecycle.getByLabel("Recovery action").selectOption("retry");
-		await lifecycle.getByLabel("Recovery reason").fill("A second retry must stay inside the retained budget.");
-		await lifecycle.getByRole("button", { name: "Controlled recovery" }).click();
-		await expect(page.getByText("Retry budget is exhausted.", { exact: true })).toBeVisible();
+		const retryAttemptId = app.hub.getTask(admin, taskId).primaryAttemptId;
+		if (retryAttemptId === undefined || retryAttemptId === attemptId) throw new TypeError("Linked retry attempt missing");
+		await app.hub.execute(admin, { commandId: "browser-lifecycle-retry-interruption", type: "attempt.reconcile",
+			target: { kind: "attempt", id: retryAttemptId }, payload: { interruption: "retryable_failure", recovery: "reconcile", note: "The linked retry also ended transiently." } });
+		const retryAttempt = app.hub.snapshot(admin).attempts.find((candidate) => candidate.id === retryAttemptId);
+		if (retryAttempt === undefined) throw new TypeError("Retry attempt missing");
+		await finishAttempt(app.hub, retryAttempt, "failed");
+		await page.reload();
+		const exhaustedForm = lifecycle.locator(`[data-form-key="lifecycle-recovery:${taskId}:${retryAttemptId}"]`);
+		await expect(exhaustedForm.getByRole("option", { name: "Bounded retry" })).toHaveCount(0);
+		await expect(exhaustedForm).toContainText("Retry budget exhausted at 1 of 1. Resume or escalate instead.");
 		await expect(lifecycle).toContainText("Retry 1 of 1");
 
 		const blocker = app.hub.getTaskLifecycle(admin, taskId).blockers[0];
@@ -155,9 +174,9 @@ test("Given a blocker and an interrupted handoff attempt, when it is rechecked a
 		await lifecycle.getByRole("button", { name: `Recheck ${blocker.id}` }).click();
 		await expect(lifecycle).toContainText("rechecking");
 
-		await page.goto(`${app.url}/#/backlog/${taskId}/handoff/${attemptId}`);
+		await page.goto(`${app.url}/#/backlog/${taskId}/handoff/${retryAttemptId}`);
 		const handoffLifecycle = page.getByRole("region", { name: "Reliable lifecycle" });
-		await expect(handoffLifecycle).toContainText("unknown");
+		await expect(handoffLifecycle).toContainText(/retryable failure|crash/);
 		await expect(handoffLifecycle).toContainText("Retry 1 of 1");
 		await expect(page.locator(".toast")).toHaveCount(0, { timeout: 6_000 });
 		for (const width of [375, 768, 1280] as const) {
@@ -167,7 +186,8 @@ test("Given a blocker and an interrupted handoff attempt, when it is rechecked a
 			await page.locator("#main-content").evaluate((element) => { element.scrollTo({ top: 0, behavior: "instant" }); });
 			await page.screenshot({ path: `.omo/evidence/lifecycle/handoff-shell-top-${width}.png` });
 			const handoffBottom = await page.locator("#main-content").evaluate((element) => { element.scrollTo({ top: element.scrollHeight, behavior: "instant" }); return { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }; });
-			expect(handoffBottom.scrollTop).toBeGreaterThan(0);
+			if (handoffBottom.scrollHeight > handoffBottom.clientHeight) expect(handoffBottom.scrollTop).toBeGreaterThan(0);
+			else expect(handoffBottom.scrollTop).toBe(0);
 			await page.screenshot({ path: `.omo/evidence/lifecycle/handoff-shell-bottom-${width}.png` });
 			await capture(handoffLifecycle, `.omo/evidence/lifecycle/handoff-recovery-${width}.png`);
 			await capture(handoffLifecycle.getByRole("region", { name: "Attempt recovery" }), `.omo/evidence/lifecycle/handoff-recovery-form-${width}.png`);

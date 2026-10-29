@@ -9,7 +9,7 @@ type RevisionTarget =
 	| { readonly kind: "continuation"; readonly attemptId: string; readonly sessionId: string; readonly sessionRevision: number; readonly profileId: string; readonly profileRevision: number }
 	| { readonly kind: "unavailable"; readonly reason: string };
 type RetryTarget =
-	| { readonly kind: "available"; readonly attemptId: string; readonly profileId: string; readonly profileRevision: number; readonly profileLabel: string; readonly environments: readonly RetryEnvironmentOption[] }
+	| { readonly kind: "available"; readonly attemptId: string; readonly profileId: string; readonly profileRevision: number; readonly profileLabel: string; readonly retryLimit: number; readonly environments: readonly RetryEnvironmentOption[] }
 	| { readonly kind: "unavailable"; readonly reason: string };
 type RetryEnvironmentOption = { readonly value: string; readonly label: string };
 
@@ -89,6 +89,7 @@ function newSessionRetryTarget(ctx: UiContext, task: HubTask, result: HubResult)
 	const profile = ctx.state.profiles.find((item) => item.id === attempt.profileId);
 	const runtime = profile === undefined ? undefined : ctx.state.installations.find((item) => item.id === profile.runtimeInstallationId && item.kind === "agent_runtime" && item.enabled && item.available);
 	if (profile === undefined || !profile.enabled || runtime === undefined) return { kind: "unavailable", reason: "The attempt's current profile or runtime connector is unavailable." };
+	if (attempt.retryOrdinal > 0 && attempt.retryOrdinal >= attempt.retryLimit) return { kind: "unavailable", reason: "The retained retry budget is exhausted." };
 	const environments: RetryEnvironmentOption[] = [];
 	if (profile.allowedEnvironmentModes.includes("none")) environments.push({ value: "none", label: "No environment required" });
 	if (profile.allowedEnvironmentModes.includes("existing")) {
@@ -97,7 +98,7 @@ function newSessionRetryTarget(ctx: UiContext, task: HubTask, result: HubResult)
 	if (profile.allowedEnvironmentModes.includes("provision")) {
 		for (const installation of ctx.state.installations.filter((item) => item.kind === "execution" && item.enabled && item.available)) environments.push({ value: `provision:${installation.id}`, label: `New allocation: ${installation.label}` });
 	}
-	return environments.length === 0 ? { kind: "unavailable", reason: "No profile-valid environment choice is currently available." } : { kind: "available", attemptId: attempt.id, profileId: profile.id, profileRevision: profile.revision, profileLabel: profile.label, environments };
+	return environments.length === 0 ? { kind: "unavailable", reason: "No profile-valid environment choice is currently available." } : { kind: "available", attemptId: attempt.id, profileId: profile.id, profileRevision: profile.revision, profileLabel: profile.label, retryLimit: attempt.retryOrdinal > 0 ? attempt.retryLimit : 3, environments };
 }
 
 function retryDialog(ctx: UiContext, task: HubTask, target: Extract<RetryTarget, { readonly kind: "available" }>): void {
@@ -114,8 +115,17 @@ function retryDialog(ctx: UiContext, task: HubTask, target: Extract<RetryTarget,
 		}
 		confirm.disabled = true;
 		dialog.setAttribute("aria-busy", "true");
-		void ctx.command({ commandId: commandId(), type: "attempt.retry", target: { kind: "attempt", id: target.attemptId },
-			expected: { task: task.revision, profile: target.profileRevision, ...(selection.registrationRevision === undefined ? {} : { registration: selection.registrationRevision }) }, payload: { predecessorId: target.attemptId, input: context.value === "snapshot" ? "snapshot" : "current_task", sameSession: false, environment: selection.environment } }, "New-session retry accepted with the selected environment.").then((saved) => {
+		void ctx.command({
+			commandId: commandId(),
+			type: "attempt.retry",
+			target: { kind: "attempt", id: target.attemptId },
+			expected: { task: task.revision, profile: target.profileRevision,
+				...(selection.registrationRevision === undefined ? {} : { registration: selection.registrationRevision }) },
+			payload: { predecessorId: target.attemptId,
+				input: context.value === "snapshot" ? "snapshot" : "current_task",
+				reason: "Retry requested from retained result review.", retryLimit: target.retryLimit,
+				sameSession: false, environment: selection.environment },
+		}, "New-session retry accepted with the selected environment.").then((saved) => {
 			if (saved) dialog.close();
 			else { confirm.disabled = false; dialog.removeAttribute("aria-busy"); }
 		});
