@@ -10,7 +10,8 @@ import type { ActionContext, AttemptStart } from '../application/contracts/index
 export const context = (operationId: string): ActionContext => ({ workspaceId: 'hub', installationId: 'opencode-test',
   correlationId: operationId, commandId: operationId, operationId, inputDigest: digest(operationId), authorizedGrantRefs: ['opencode:logical'] });
 export const selection = { agent: 'fixture-agent', model: { providerID: 'fixture-provider', modelID: 'fixture-model' }, projectId: 'project-default' };
-export async function openCodeFixture() {
+export async function openCodeFixture(options: { readonly recipient?: { readonly hostId: string; readonly workspaceId: string;
+  readonly incarnation: string } } = {}) {
   const messages: z.infer<typeof messageSchema>[] = [];
   const childMessages = new Map<string, z.infer<typeof messageSchema>[]>();
   const calls: { method: string; path: string; search: string; body: unknown }[] = [];
@@ -64,7 +65,8 @@ export async function openCodeFixture() {
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Expected fixture port');
   const connection = { installationId: 'opencode-test', label: 'Fixture', origin: `http://127.0.0.1:${address.port}`,
-    directory: '/fixture', authorization: 'Bearer fixture-only' };
+    directory: '/fixture', authorization: 'Bearer fixture-only',
+    ...(options.recipient === undefined ? {} : { recipient: options.recipient }) };
   const ledger = new ConnectorLedger(':memory:');
   const connector = new OpenCodeRuntimeConnector(ledger, connection);
   const open = () => connector.openSession(context('open'), { hubSessionId: 'logical', mode: 'create',
