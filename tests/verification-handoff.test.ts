@@ -55,6 +55,9 @@ test("preview delegation binds exact repository source context and target identi
     });
     assert.equal(preview.target["kind"], "new");
     assert.equal(preview.target["runtimeInstallationId"], "runtime-sim-structured");
+    assert.equal(preview.target["readiness"], "pending_session_creation");
+    assert.equal(preview.target["authority"], "control");
+    assert.equal(preview.target["incarnation"], "assigned_after_creation");
 
     // When
     const delegated = await f.hub.execute(member, {
@@ -154,6 +157,9 @@ test("attached recipient delegates into the exact idle existing session without 
     const preview = f.hub.previewHandoff(member, { taskId, profileId: "profile-structured",
       repositoryId: repository.id, repositoryRevision: repository.revision, sourceBranch: "work/attached",
       sourceCommit, requestedValidation: "Attached verifier", contextDigest, recipient });
+    assert.equal(preview.target["readiness"], "ready");
+    assert.equal(preview.target["authority"], "control");
+    assert.equal(preview.target["incarnation"], "v1");
 
     // When
     const delegated = await f.hub.execute(member, { commandId: "delegate-attached-handoff",

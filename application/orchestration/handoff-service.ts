@@ -57,7 +57,9 @@ export class HandoffService {
     };
     const target = input.recipient.kind === "new"
       ? { kind: "new", runtimeInstallationId: profile.runtimeInstallationId,
-          profileId: profile.id, profileRevision: profile.revision }
+          profileId: profile.id, profileRevision: profile.revision,
+          readiness: "pending_session_creation", authority: "control",
+          incarnation: "assigned_after_creation" }
       : this.attachedTarget(actor, input.recipient);
     return this.handoffs.preview({ workspaceId: actor.workspaceId, task, profile,
       repositoryId: input.repositoryId, repositoryRevision: input.repositoryRevision,
@@ -150,12 +152,21 @@ export class HandoffService {
   private attachedTarget(actor: Actor, recipient: Extract<HandoffRecipient, { readonly kind: "attached" }>) {
     const session = this.execution.getSession(actor.workspaceId, recipient.sessionId);
     this.requireProject(actor, session.projectId);
-    const nativeSessionDigest = session.nativeIdentityKey === undefined ? undefined
-      : digest(NativeRefSchema.parse(JSON.parse(session.nativeIdentityKey)));
+    if (session.lifecycle !== "open" || session.controlMode !== "control") throw unsupported(
+      "handoff_target_not_ready", "Attached handoff recipients require an open control session.");
+    if (session.profileId !== recipient.profileId || session.profileRevision !== recipient.profileRevision) throw unsupported(
+      "handoff_profile_mismatch", "Attached handoff recipient profile identity changed.");
+    if (session.activeAttemptId !== undefined &&
+      this.execution.getAttempt(actor.workspaceId, session.activeAttemptId).phase !== "finished") throw unsupported(
+        "handoff_target_busy", "Attached handoff recipient still has unresolved active work.");
+    const nativeSession = session.nativeIdentityKey === undefined ? undefined
+      : NativeRefSchema.parse(JSON.parse(session.nativeIdentityKey));
+    const nativeSessionDigest = nativeSession === undefined ? undefined : digest(nativeSession);
     return { kind: "attached", runtimeInstallationId: session.runtimeInstallationId,
       sessionId: session.id, sessionRevision: session.revision,
       bindingGeneration: session.bindingGeneration, profileId: recipient.profileId,
-      profileRevision: recipient.profileRevision,
+      profileRevision: recipient.profileRevision, readiness: "ready", authority: "control",
+      incarnation: nativeSession?.incarnation ?? "not_reported",
       ...(nativeSessionDigest === undefined ? {} : { nativeSessionDigest }) };
   }
 }
