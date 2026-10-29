@@ -6,11 +6,14 @@ import type { CanUseTool, Options, SDKUserMessage } from '@anthropic-ai/claude-a
 import { z } from 'zod';
 import type { ClaudeConnection, ClaudeMessage, ClaudeSession } from './schema.ts';
 import { claudeSessionSchema } from './schema.ts';
+import { isClaudeLifecycleFrame, parseClaudeTurnFrame } from './frames.ts';
+export { parseClaudeTurnFrame } from './frames.ts';
 
 const CHILD_ENVIRONMENT_KEYS = ['HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL',
   'TERM', 'NO_COLOR', 'CI', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
   'CLAUDE_CODE_OAUTH_TOKEN'] as const;
 const SDK_PACKAGE_NAME = '@anthropic-ai/claude-agent-sdk' as const;
+const MAX_TURN_MESSAGES = 512;
 const packageMetadataSchema = z.object({ version: z.string().min(1) });
 
 export function buildClaudeChildEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
@@ -33,41 +36,6 @@ export interface ClaudeSdkDriver {
 
 const rawSessionSchema = z.object({ sessionId: z.string(), summary: z.string().optional(), cwd: z.string().optional(),
   createdAt: z.union([z.string(), z.number()]).optional(), lastModified: z.union([z.string(), z.number()]).optional() });
-const rawMessageSchema = z.object({ type: z.string(), session_id: z.string().optional(), uuid: z.string().optional(),
-  subtype: z.string().optional(), result: z.string().optional(), is_error: z.boolean().optional(),
-  user_message_uuid: z.string().optional(), user_message_uuids: z.array(z.string()).optional(),
-  parent_tool_use_id: z.string().nullable().optional(), timestamp: z.string().optional(),
-  message: z.object({ content: z.array(z.object({ type: z.string(), text: z.string().optional() })) }).optional() }).passthrough();
-
-export type ClaudeTurnFrame = { readonly affiliated: boolean; readonly acknowledged: boolean;
-  readonly message?: ClaudeMessage };
-
-export function parseClaudeTurnFrame(value: unknown, inputId: string, affiliated: boolean): ClaudeTurnFrame {
-  const parsed = rawMessageSchema.parse(value);
-  const echoesInput = parsed.user_message_uuid === inputId || parsed.user_message_uuids?.includes(inputId) === true;
-  const identifiesInput = parsed.user_message_uuid !== undefined || parsed.user_message_uuids !== undefined;
-  const retainedAffiliation = identifiesInput && !echoesInput ? false : affiliated;
-  const observedAt = parsed.timestamp ?? new Date().toISOString();
-  if (parsed.type === 'assistant') {
-    const mainThread = parsed.parent_tool_use_id === null;
-    const nextAffiliated = retainedAffiliation || (mainThread && echoesInput);
-    const text = parsed.message?.content.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('\n') ?? '';
-    return { affiliated: nextAffiliated, acknowledged: mainThread && echoesInput,
-      ...(mainThread && nextAffiliated && text ? {
-        message: { kind: 'assistant' as const, id: parsed.uuid ?? 'assistant:unknown', text, observedAt },
-      } : {}) };
-  }
-  if (parsed.type === 'result') {
-    const linked = retainedAffiliation || echoesInput;
-    return { affiliated: false, acknowledged: echoesInput, ...(linked ? { message: {
-      kind: 'result' as const, id: parsed.uuid ?? 'result:unknown',
-      outcome: parsed.subtype === 'success' && parsed.is_error !== true ? 'completed' as const : 'failed' as const,
-      summary: parsed.result ?? '', observedAt,
-    } } : {}) };
-  }
-  return { affiliated: retainedAffiliation, acknowledged: false };
-}
-
 export const denyClaudePermission: CanUseTool = async (_toolName, _input, options) => ({
   behavior: 'deny', message: 'Use authenticated Claude Code for native permission decisions.',
   toolUseID: options.toolUseID,
@@ -123,15 +91,25 @@ export class OfficialClaudeSdkDriver implements ClaudeSdkDriver {
     let observedSessionId: string | undefined;
     let inputAcknowledged = false;
     let affiliated = false;
+    let pendingLifecycle: unknown[] = [];
     for await (const value of stream) {
-      const parsed = rawMessageSchema.parse(value);
-      observedSessionId ??= parsed.session_id;
       const frame = parseClaudeTurnFrame(value, input.inputId, affiliated);
+      observedSessionId ??= frame.sessionId;
+      if (frame.cleared) pendingLifecycle = [];
+      if (!affiliated && !frame.acknowledged && isClaudeLifecycleFrame(value)) pendingLifecycle = [...pendingLifecycle, value].slice(-256);
+      if (frame.acknowledged && pendingLifecycle.length > 0) {
+        for (const pending of pendingLifecycle) messages.push(...(parseClaudeTurnFrame(pending, input.inputId, true).messages ?? []));
+        pendingLifecycle = [];
+      }
       affiliated = frame.affiliated;
       inputAcknowledged ||= frame.acknowledged;
-      if (frame.message) messages.push(frame.message);
+      messages.push(...(frame.messages ?? []));
     }
     if (!inputAcknowledged) throw new TypeError('Claude Agent SDK did not attest the exact submitted user message UUID.');
-    return { sessionId: observedSessionId ?? input.sessionId, inputId: input.inputId, messages };
+    const boundedMessages: readonly ClaudeMessage[] = messages.length <= MAX_TURN_MESSAGES ? messages : [{
+      kind: 'coverage', id: `coverage:${input.inputId}`, reason: 'Claude SDK lifecycle frames exceeded the retained turn limit.',
+      observedAt: new Date().toISOString(),
+    }, ...messages.slice(-(MAX_TURN_MESSAGES - 1))];
+    return { sessionId: observedSessionId ?? input.sessionId, inputId: input.inputId, messages: boundedMessages };
   }
 }
