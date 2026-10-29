@@ -74,9 +74,10 @@ test('DIM recipient proxy keeps integration and bridge tokens inside trusted tra
     assert.equal(JSON.stringify(assignment).includes('short-lived-bridge'), false);
     await proxy(registration, 'ses_disposable', { kind: 'ack', deliveryDigest: 'sha256:delivery' });
     await proxy(registration, 'ses_disposable', { kind: 'result', result: { submissionKey: 'native-ubuntu',
-      sourceCommit: 'a'.repeat(40), contextDigest: 'sha256:context',
+      kind: 'final', sourceCommit: 'a'.repeat(40), contextDigest: 'sha256:context',
       outcome: 'partial', summary: 'Native checks retained.',
       limitations: ['One blocker'], referenceIds: [], artifacts: [{ repositoryId: 'repo-one', sourceCommit: 'a'.repeat(40), path: 'docs/report.md' }],
+      criterionEvidence: [],
       evidence: [{ origin: 'agent_claim', detail: 'Agent-reported native evidence.' }] } });
     assert.equal(requests.filter((item) => item.path === '/api/v1/recipient/exchange').length, 3);
     assert.ok(requests.filter((item) => item.path !== '/api/v1/recipient/exchange').every((item) => item.authorization === 'Bearer short-lived-bridge'));

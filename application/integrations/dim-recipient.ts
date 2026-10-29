@@ -67,11 +67,12 @@ export function createWorkHubRecipientProxy(): RecipientProxy {
           authorization: `Bearer ${exchange.token}`, body: JsonObjectSchema.parse({ commandId: `recipient-result:${digest({ attemptId: exchange.assignment.attemptId,
             submissionKey: operation.result.submissionKey })}`, type: 'result.submit',
             target: { kind: 'attempt', id: exchange.assignment.attemptId }, payload: {
-              submissionKey: operation.result.submissionKey, outcome: operation.result.outcome,
+            submissionKey: operation.result.submissionKey, outcome: operation.result.outcome,
+            kind: operation.result.kind,
               inputDigest, actualCommit: operation.result.sourceCommit,
               actualContextDigest: operation.result.contextDigest, summary: operation.result.summary,
               limitations: operation.result.limitations, referenceIds: operation.result.referenceIds,
-              artifacts, evidence: operation.result.evidence,
+            artifacts, evidence: operation.result.evidence, criterionEvidence: operation.result.criterionEvidence,
             } }) });
       }
       default: return operation satisfies never;
