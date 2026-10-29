@@ -72,6 +72,39 @@ Run `npm run test:contracts`. The suite checks closed boundary schemas, serializ
 
 Passing simulator conformance demonstrates core contract behavior only. It is not evidence of compatibility with a live provider or runtime.
 
+## Prompt templates and OpenCode lifecycle
+
+`application/prompts/index.ts` exports the shared prompt registry. Each render is
+identified by a closed template ID and explicit version, and returns the exact
+canonical text, its digest, the canonical input digest, and the structured output
+contract. The v1 IDs are `task_brief`, `status_result`, `question_block`,
+`answer_continuation`, `verifier_handoff`, and `fix_incomplete`.
+
+The canonical envelope declares `checkpoint`, `final`, `criteria`, and `block`
+channels. These structured fields carry lifecycle meaning; ordinary prose does
+not. A reported final result remains evidence for human review and never grants
+the runtime authority to complete the task.
+
+The OpenCode connector receives already rendered text from the application and
+sends that text unchanged. It does not select templates or infer lifecycle state
+from keywords. A supplied start-attempt digest must match before native delivery.
+Queued continuation uses the same durable operation ledger, so replay of the same
+operation does not submit a second native message.
+
+Supported native OpenCode questions are bound to an assistant message descended
+from an input owned by the current Hub attempt. Their native revision is stable in
+the request event and is checked before first delivery. A successful answer is
+recorded before the native question disappears; retrying the same delivery returns
+the stored receipt without replying again. An answer continuation template carries
+the accepted answer and the remaining criteria when the application queues further
+work.
+
+Parent completion is withheld while an affiliated child is busy. Child discovery
+is bounded by count and depth, and unrelated children are ignored. Missing retained
+children, unavailable statuses, truncated traversal, and lost child projection
+after restart produce unknown activity rather than a false completion. HTTP 204,
+native idle, and prose such as "done" are not completion evidence by themselves.
+
 ## Configured modules and receipt association
 
 `HubOptions.connectors` supplies execution/runtime implementations keyed by
