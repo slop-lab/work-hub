@@ -23,6 +23,8 @@ export function runtimeInputSnapshot(input: z.infer<typeof InputSnapshotSchema>)
       ...(item.omissionReason === undefined ? {} : { omissionReason: item.omissionReason }),
     })),
     authorizedEffectKinds: input.authorizedEffectKinds, assembledAt: input.assembledAt,
+    ...(input.verification === undefined ? {} : { verification: input.verification }),
+    ...(input.promptDigest === undefined ? {} : { promptDigest: input.promptDigest }),
   };
 }
 

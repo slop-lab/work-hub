@@ -85,12 +85,12 @@ export class RuntimeEventReconciler {
         const attempt = this.input.execution.getAttempt(workspaceId, event.payload.attemptId);
         this.input.results.create({ workspaceId, taskId: attempt.taskId, attemptId: attempt.id,
           authorId: `runtime:${installationId}`, summary: event.payload.summary,
-          limitations: [], referenceIds: event.payload.referenceIds,
+          limitations: [], referenceIds: event.payload.referenceIds, artifacts: [],
           evidence: [{ origin: "runtime_observation", detail: canonicalJson({
             sourceInstallationId: installationId, nativeSession: event.nativeSession,
             sourceEventId, contentDigest: digest(event.payload.summary),
             observation: 'Captured runtime report, not independent commit or CI verification.',
-          }) }] });
+          }) }], outcome: "unspecified" });
         return;
       }
       case "gap":
