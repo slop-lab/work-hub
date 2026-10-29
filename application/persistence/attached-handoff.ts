@@ -1,6 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import { assembleContext } from "../artifacts/snapshot-context.ts";
 import type { AttemptView, ExecutionProfileView, SessionView, TaskView } from "../domain/model.ts";
+import { PromptEnvelopeSchema } from "../prompts/index.ts";
 import { digest, newId, type Clock } from "./codec.ts";
 import type { ExecutionRepository } from "./execution-repository.ts";
 import type { HandoffPreview, HandoffRepository } from "./handoff-repository.ts";
@@ -33,12 +35,21 @@ export class AttachedHandoffFactory {
   }): AttemptView {
     const attemptId = newId("attempt");
     const now = this.clock.now().toISOString();
+    const contextItems = assembleContext(this.database, {
+      workspaceId: input.workspaceId, taskId: input.task.id,
+      selectedReferenceIds: input.preview.selectedReferenceIds,
+      selectedResponseIds: input.preview.selectedResponseIds,
+    });
+    const prompt = PromptEnvelopeSchema.parse(JSON.parse(input.preview.prompt));
     const snapshotBase = {
       id: newId("snapshot"), taskId: input.task.id, taskRevision: input.task.revision,
+      scopeRevision: input.task.scopeRevision,
       profileId: input.profile.id, profileRevision: input.profile.revision,
-      instruction: input.preview.prompt, selectedReferenceIds: [], selectedResponseIds: [],
-      contextItems: [], authorizedEffectKinds: input.authorizedEffectKinds, assembledAt: now,
+      instruction: input.preview.prompt, selectedReferenceIds: input.preview.selectedReferenceIds,
+      selectedResponseIds: input.preview.selectedResponseIds,
+      contextItems, authorizedEffectKinds: input.authorizedEffectKinds, assembledAt: now,
       verification: input.preview.verification, promptDigest: input.preview.promptDigest,
+      promptTemplate: { id: "verifier_handoff", version: 1, inputDigest: digest(prompt.input) },
     };
     const snapshot = { ...snapshotBase, digest: digest(snapshotBase) };
     this.database.prepare(`INSERT INTO attempts
