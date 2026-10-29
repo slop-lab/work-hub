@@ -9,6 +9,7 @@ import {
   textSchema,
   workAreaSchema,
 } from "./schema-common.ts";
+import { HandoffBindingSchema } from "../contracts/handoff.ts";
 
 export const executionCommandSchemas = [
   envelope('attempt.report', z.strictObject({ phase: z.enum(['running', 'waiting_input', 'ended', 'unknown']), note: textSchema.optional() })),
@@ -36,6 +37,7 @@ export const executionCommandSchemas = [
       selectedReferenceIds: z.array(idSchema),
       selectedResponseIds: z.array(idSchema),
       authorizedEffectKinds: z.array(idSchema).default([]),
+      handoff: HandoffBindingSchema.optional(),
     }),
   ),
   envelope(
