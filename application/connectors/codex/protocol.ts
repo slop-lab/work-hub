@@ -20,7 +20,8 @@ export interface CodexProtocol {
   respondServerRequest(nativeRequestId: string, result: unknown): Promise<void>;
   close(): Promise<void>;
 }
-type Pending = { readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void; readonly timer: NodeJS.Timeout };
+type Pending = { readonly method: string; readonly resolve: (value: unknown) => void;
+  readonly reject: (error: Error) => void; readonly timer: NodeJS.Timeout };
 type TrackedTurn = { readonly threadId: string; readonly clientId: string; readonly turnId?: string };
 const MAX_STDOUT_LINE_BYTES = 1024 * 1024;
 const MAX_NOTIFICATIONS = 256;
@@ -29,7 +30,9 @@ type ServerRequest = { readonly id: string | number; readonly event: CodexProtoc
 
 export class CodexProtocolError extends Error {
   readonly code: number;
-  constructor(code: number) { super('Codex app-server rejected the request.'); this.name = 'CodexProtocolError'; this.code = code; }
+  readonly method: string;
+  constructor(code: number, method = 'unknown') { super(`Codex app-server rejected ${method}.`);
+    this.name = 'CodexProtocolError'; this.code = code; this.method = method; }
 }
 
 export class CodexAppServerProtocol implements CodexProtocol {
@@ -136,7 +139,7 @@ export class CodexAppServerProtocol implements CodexProtocol {
       const pending = this.pending.get(parsed.id);
       if (!pending) return;
       clearTimeout(pending.timer); this.pending.delete(parsed.id);
-      if (parsed.error) pending.reject(new CodexProtocolError(parsed.error.code));
+      if (parsed.error) pending.reject(new CodexProtocolError(parsed.error.code, pending.method));
       else pending.resolve(parsed.result);
       return;
     }
@@ -160,7 +163,7 @@ export class CodexAppServerProtocol implements CodexProtocol {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new HubError({ code: 'codex_timeout', category: 'unavailable',
         message: 'Codex app-server did not answer before the operation deadline.', retry: 'reconcile_first' })); }, 15_000);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { method, resolve, reject, timer });
       child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
         if (!error) return;
         const pending = this.pending.get(id);
