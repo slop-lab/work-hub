@@ -17,6 +17,7 @@ export const userSchema = z.object({
 export const taskSchema = z.object({
 	id: idSchema,
 	revision: z.number().int(),
+	scopeRevision: z.number().int().nonnegative().default(0),
 	projectId: idSchema,
 	title: z.string(),
 	description: z.string(),

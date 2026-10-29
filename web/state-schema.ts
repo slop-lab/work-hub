@@ -18,6 +18,8 @@ export const resultSchema = z.object({
 	authorId: id,
 	evidence: z.array(z.object({ origin: z.enum(['agent_claim', 'runtime_observation', 'external_check', 'human_assertion']), detail: z.string() })),
 	outcome: z.enum(["passed", "failed", "partial", "blocked", "unspecified"]).optional(),
+	kind: z.enum(["checkpoint", "final"]),
+	criterionEvidence: z.array(z.object({ criterionId: id, status: z.enum(["satisfied", "not_satisfied", "not_verified"]), detail: z.string(), referenceIds: z.array(id) })),
 	submissionKey: z.string().optional(),
 	binding: z.object({ inputDigest: z.string(), repositoryId: id, repositoryRevision: z.number().int().positive(), sourceCommit: z.string(), contextDigest: z.string(), targetDigest: z.string() }).optional(),
 	summary: z.string(),
