@@ -1,7 +1,8 @@
 import type { ActionContext, AgentRuntimeConnector, AttemptStart, CallContext, InstructionInput, OpenSessionInput,
   ResponseDelivery, RuntimeBindingDescriptor, RuntimeControlGrant, RuntimeRoute, RuntimeTarget, StopInput, StopResult } from '../../contracts/index.ts';
-import { RuntimeBindingDescriptorSchema, RuntimeDetachedResultSchema, StopResultSchema } from '../../contracts/index.ts';
+import { ResponseDeliveryResultSchema, RuntimeBindingDescriptorSchema, RuntimeDetachedResultSchema, StopResultSchema } from '../../contracts/index.ts';
 import { HubError } from '../../domain/errors.ts';
+import { digest } from '../../persistence/codec.ts';
 import type { ConnectorLedger } from '../ledger.ts';
 import { codexCapabilities, codexManifest } from './capabilities.ts';
 import { CodexInput } from './input.ts';
@@ -9,6 +10,7 @@ import { CodexObservation } from './observation.ts';
 import { CodexAppServerProtocol, type CodexProtocol } from './protocol.ts';
 import { accountReadResponseSchema, codexConnectionSchema, codexSelectionSchema, modelListResponseSchema,
   threadListResponseSchema, threadStartResponseSchema, type CodexConnection } from './schema.ts';
+import { toolRequestUserInputParamsSchema } from './schema.ts';
 import { CodexState } from './state.ts';
 
 export type CodexDiscovery = { readonly version: string; readonly directory: string;
@@ -110,7 +112,7 @@ export class CodexRuntimeConnector implements AgentRuntimeConnector {
       return { nativeSession: this.state.reference('agent-thread', thread.id), nativeIdentityAssurance: 'attested',
         origin: input.mode === 'create' ? 'created' : 'attached_existing', route: input.route.route,
         controlGrant: { id: `codex:${input.hubSessionId}`, mode: input.requestedControl,
-          allowedActions: input.requestedControl === 'control' ? ['start_attempt', 'send_instruction', 'request_stop'] : [],
+          allowedActions: input.requestedControl === 'control' ? ['start_attempt', 'send_instruction', 'deliver_response', 'request_stop'] : [],
           externalClientsMayAlsoControl: true }, capabilities: codexCapabilities, history: 'partial' };
     });
   }
@@ -120,10 +122,46 @@ export class CodexRuntimeConnector implements AgentRuntimeConnector {
   }
   startAttempt(ctx: ActionContext, input: AttemptStart) { return this.input.send(ctx, input); }
   sendInstruction(ctx: ActionContext, input: InstructionInput) { return this.input.send(ctx, input); }
-  async deliverResponse(ctx: ActionContext, input: ResponseDelivery): Promise<never> {
-    this.state.target(ctx, input.target, 'input');
-    throw new HubError({ code: 'codex_native_response_unsupported', category: 'unsupported',
-      message: 'Answer Codex questions and approvals in an authenticated native Codex client.', retry: 'manual_action' });
+  async deliverResponse(ctx: ActionContext, input: ResponseDelivery) {
+    const binding = this.state.target(ctx, input.target, 'input');
+    const attempt = binding.attempt;
+    if (!attempt || attempt.id !== input.target.hubAttemptId || input.nativeRequestRef.installationId !== ctx.installationId ||
+      input.nativeRequestRef.providerScope !== this.state.connection.directory || input.nativeRequestRef.kind !== 'question') {
+      throw new HubError({ code: 'codex_question_scope', category: 'identity_mismatch',
+        message: 'The Codex question is outside this attempt binding.', retry: 'never' });
+    }
+    return this.state.ledger.execute(ctx, { kind: 'runtime.deliverResponse', schemaId: 'workhub.runtime.response-receipt.v1',
+      schema: ResponseDeliveryResultSchema, input, effect: 'response.acknowledged' }, async () => {
+      const event = this.protocol.pendingServerRequests().find((candidate) => candidate.nativeRequestId === input.nativeRequestRef.id);
+      const parsed = toolRequestUserInputParamsSchema.safeParse(event?.params);
+      const question = parsed.success ? parsed.data.questions[0] : undefined;
+      const revision = parsed.success ? digest(parsed.data) : undefined;
+      if (!event?.nativeRequestId || !parsed.success || parsed.data.questions.length !== 1 || !question || question.isSecret ||
+        parsed.data.threadId !== binding.nativeId || parsed.data.turnId !== attempt.turnId || input.validity.kind !== 'attempt' ||
+        input.validity.nativeRequestRevision !== revision) throw new HubError({ code: 'codex_question_changed', category: 'conflict',
+        message: 'The native question is no longer current or has an unsupported shape. Inspect it in an authenticated native Codex client.', retry: 'manual_action' });
+      let answer: string;
+      switch (input.answer.kind) {
+        case 'text': {
+          if (question.options !== null) throw new HubError({ code: 'codex_question_answer_kind', category: 'validation',
+            message: 'This Codex question requires one listed option.', retry: 'never' });
+          answer = input.answer.text;
+          break;
+        }
+        case 'single_choice': {
+          const option = question.options?.[Number(input.answer.optionId)];
+          if (!option || question.isOther) throw new HubError({ code: 'codex_question_option_missing', category: 'validation',
+            message: 'The selected Codex option is unavailable.', retry: 'never' });
+          answer = option.label;
+          break;
+        }
+        case 'approval': throw new HubError({ code: 'codex_approval_unsupported', category: 'unsupported',
+          message: 'Codex approvals are never autoapproved; use an authenticated native Codex client.', retry: 'never' });
+      }
+      const nativeRequestId = event.nativeRequestId;
+      await this.protocol.respondServerRequest(nativeRequestId, { answers: { [question.id]: { answers: [answer] } } });
+      return { responseId: input.responseId, receiptRef: this.state.reference('question-response', nativeRequestId) };
+    });
   }
   async requestStop(ctx: ActionContext, input: StopInput) {
     const binding = this.state.target(ctx, input.target, 'stop');

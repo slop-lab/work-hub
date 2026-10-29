@@ -1,12 +1,16 @@
 import type { CallContext, ExecutionObservation, OutputItem, OutputPage, RuntimeEvent, RuntimeSessionObservation, RuntimeTarget } from '../../contracts/index.ts';
 import { digest } from '../../persistence/codec.ts';
-import type { CodexProtocol } from './protocol.ts';
-import { agentMessageSchema, threadReadResponseSchema, userMessageSchema, type CodexBinding, type CodexThread } from './schema.ts';
+import type { CodexProtocol, CodexProtocolEvent } from './protocol.ts';
+import { agentMessageSchema, errorNotificationSchema, itemCompletedNotificationSchema, itemStartedNotificationSchema,
+  rateLimitsUpdatedNotificationSchema, threadReadResponseSchema, threadStatusChangedNotificationSchema,
+  toolRequestUserInputParamsSchema, turnNotificationSchema, unsupportedServerRequestSchema, userMessageSchema,
+  type CodexBinding, type CodexThread } from './schema.ts';
 import type { CodexState } from './state.ts';
 
 const LIMITATIONS = [
-  'Native approvals and questions require an authenticated native Codex client.',
+  'Only one non-secret text or fixed-choice Codex question is bridged; other questions and all approvals require an authenticated native Codex client.',
   'Only Hub-owned turns and completed user/agent messages are imported; tool activity and unrelated history remain native.',
+  'Child activity coverage is unavailable; native reconciliation is required before claiming completion.',
   'A turn response proves input receipt, not successful execution or task completion.',
 ] as const;
 
@@ -17,10 +21,105 @@ function execution(state: CodexState, binding: CodexBinding, thread: CodexThread
   const common = { hubAttemptId: attempt.id, nativeExecutionRef: state.reference('turn', attempt.turnId), pendingNativeRequestRefs: [] };
   if (!turn) return { ...common, phase: 'unknown' };
   switch (turn.status) {
-    case 'inProgress': return { ...common, phase: 'running', ...(turn.startedAt === null ? {} : { startedAt: new Date(turn.startedAt * 1000).toISOString() }) };
+    case 'inProgress': return { ...common,
+      phase: thread.status.type === 'active' && thread.status.activeFlags.length > 0 ? 'waiting_input' : 'running',
+      ...(turn.startedAt === null ? {} : { startedAt: new Date(turn.startedAt * 1000).toISOString() }) };
     case 'completed': return { ...common, phase: 'ended', termination: 'completed', ...(turn.completedAt === null ? {} : { endedAt: new Date(turn.completedAt * 1000).toISOString() }) };
     case 'interrupted': return { ...common, phase: 'ended', termination: 'stopped', ...(turn.completedAt === null ? {} : { endedAt: new Date(turn.completedAt * 1000).toISOString() }) };
     case 'failed': return { ...common, phase: 'ended', termination: 'failed', ...(turn.completedAt === null ? {} : { endedAt: new Date(turn.completedAt * 1000).toISOString() }) };
+  }
+}
+
+function nativeQuestion(state: CodexState, binding: CodexBinding, target: RuntimeTarget,
+  event: CodexProtocolEvent): RuntimeEvent | undefined {
+  if (event.method !== 'item/tool/requestUserInput' || event.nativeRequestId === undefined || !binding.attempt) return undefined;
+  const parsed = toolRequestUserInputParamsSchema.safeParse(event.params);
+  const question = parsed.success ? parsed.data.questions[0] : undefined;
+  if (!parsed.success || parsed.data.questions.length !== 1 || !question || question.isSecret ||
+    (question.options !== null && (question.isOther || question.options.length === 0)) ||
+    parsed.data.threadId !== binding.nativeId || parsed.data.turnId !== binding.attempt.turnId) return undefined;
+  const nativeRequestRef = state.reference('question', event.nativeRequestId);
+  const revision = digest(parsed.data);
+  return { sourceEventId: `question:${event.nativeRequestId}:${revision}`, streamScope: target.hubSessionId,
+    nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration, observedAt: new Date().toISOString(),
+    payload: { type: 'request.created', request: { nativeRequestRef, nativeRequestRevision: revision, responseRoute: 'native',
+      draft: { kind: 'question', projectId: binding.selection.projectId, taskId: binding.attempt.taskId,
+        recipient: { kind: 'project_members', projectId: binding.selection.projectId }, prompt: question.question,
+        ...(question.header ? { reason: question.header } : {}), referenceIds: [],
+        blocking: parsed.data.isBlocking ? 'runtime_action' : 'none', answerSchema: question.options === null
+          ? { kind: 'text', minLength: 1, maxLength: 16_384 }
+          : { kind: 'single_choice', options: question.options.map((option, index) => ({ id: String(index), label: option.label })) },
+        validity: { kind: 'attempt', target: { ...target, hubAttemptId: binding.attempt.id }, nativeRequestRef,
+          nativeRequestRevision: revision },
+      },
+    } } };
+}
+
+function lifecycleExtension(target: RuntimeTarget, event: CodexProtocolEvent): RuntimeEvent | undefined {
+  const common = { streamScope: target.hubSessionId, nativeSession: target.nativeSession,
+    bindingGeneration: target.bindingGeneration, sourceEventId: `codex:${digest(event)}` };
+  switch (event.method) {
+    case 'turn/started':
+    case 'turn/completed': {
+      const parsed = turnNotificationSchema.safeParse(event.params);
+      if (!parsed.success || parsed.data.threadId !== target.nativeSession.id) return undefined;
+      const observedAt = new Date(((event.method === 'turn/started' ? parsed.data.turn.startedAt : parsed.data.turn.completedAt) ?? 0) * 1000).toISOString();
+      return { ...common, observedAt, payload: { type: 'extension', namespace: 'workhub.codex.lifecycle.v1', data: {
+        kind: event.method === 'turn/started' ? 'turn_started' : 'turn_completed', threadId: parsed.data.threadId,
+        turnId: parsed.data.turn.id, status: parsed.data.turn.status,
+      } } };
+    }
+    case 'item/started':
+    case 'item/completed': {
+      const parsed = event.method === 'item/started'
+        ? itemStartedNotificationSchema.safeParse(event.params)
+        : itemCompletedNotificationSchema.safeParse(event.params);
+      if (!parsed.success || parsed.data.threadId !== target.nativeSession.id) return undefined;
+      const observedAtMs = 'startedAtMs' in parsed.data ? parsed.data.startedAtMs : parsed.data.completedAtMs;
+      return { ...common, observedAt: new Date(observedAtMs).toISOString(), payload: {
+        type: 'extension', namespace: 'workhub.codex.lifecycle.v1', data: {
+          kind: event.method === 'item/started' ? 'item_started' : 'item_completed', itemId: parsed.data.item.id,
+          itemType: parsed.data.item.type, threadId: parsed.data.threadId, turnId: parsed.data.turnId, observedAtMs,
+        },
+      } };
+    }
+    case 'error': {
+      const parsed = errorNotificationSchema.safeParse(event.params);
+      if (!parsed.success || parsed.data.threadId !== target.nativeSession.id) return undefined;
+      return { ...common, observedAt: new Date().toISOString(), payload: {
+        type: 'extension', namespace: 'workhub.codex.lifecycle.v1', data: {
+          kind: parsed.data.willRetry ? 'retry_observed' : 'provider_error_observed',
+          errorKind: typeof parsed.data.error.codexErrorInfo === 'string' ? parsed.data.error.codexErrorInfo : 'other',
+          willRetry: parsed.data.willRetry, retryOrdinal: null, retryLimit: null,
+          threadId: parsed.data.threadId, turnId: parsed.data.turnId,
+        },
+      } };
+    }
+    case 'account/rateLimits/updated': {
+      const parsed = rateLimitsUpdatedNotificationSchema.safeParse(event.params);
+      if (!parsed.success) return undefined;
+      return { ...common, observedAt: new Date().toISOString(), payload: {
+        type: 'extension', namespace: 'workhub.codex.lifecycle.v1', data: {
+          kind: 'rate_limit_observed', scope: 'account',
+          ...(parsed.data.rateLimits.limitId === null ? {} : { limitId: parsed.data.rateLimits.limitId }),
+          ...(parsed.data.rateLimits.primary === null ? {} : {
+            usedPercent: parsed.data.rateLimits.primary.usedPercent,
+            ...(parsed.data.rateLimits.primary.resetsAt === null ? {} : { resetsAt: parsed.data.rateLimits.primary.resetsAt }),
+          }),
+        },
+      } };
+    }
+    case 'thread/status/changed': {
+      const parsed = threadStatusChangedNotificationSchema.safeParse(event.params);
+      if (!parsed.success || parsed.data.threadId !== target.nativeSession.id) return undefined;
+      return { ...common, observedAt: new Date().toISOString(), payload: {
+        type: 'extension', namespace: 'workhub.codex.lifecycle.v1', data: {
+          kind: 'thread_status_changed', threadId: parsed.data.threadId, status: parsed.data.status.type,
+          ...(parsed.data.status.type === 'active' ? { activeFlags: parsed.data.status.activeFlags } : {}),
+        },
+      } };
+    }
+    default: return undefined;
   }
 }
 
@@ -35,8 +134,21 @@ export class CodexObservation {
   }
   async inspect(ctx: CallContext, target: RuntimeTarget): Promise<RuntimeSessionObservation> {
     const { binding, thread } = await this.thread(ctx, target);
-    return { nativeSession: target.nativeSession, exists: true, execution: execution(this.state, binding, thread),
-      controlGrantValid: !binding.detached, limitations: [...LIMITATIONS] };
+    const pendingNativeRequestRefs = this.protocol.pendingServerRequests().flatMap((event) => {
+      if (event.method !== 'item/tool/requestUserInput' || event.nativeRequestId === undefined) return [];
+      const parsed = toolRequestUserInputParamsSchema.safeParse(event.params);
+      return parsed.success && parsed.data.threadId === binding.nativeId && parsed.data.turnId === binding.attempt?.turnId
+        ? [this.state.reference('question', event.nativeRequestId)] : [];
+    });
+    const currentExecution = execution(this.state, binding, thread);
+    const observedExecution = pendingNativeRequestRefs.length === 0 ? currentExecution : {
+      ...currentExecution, phase: 'waiting_input' as const, pendingNativeRequestRefs,
+    };
+    const activityPhase = observedExecution.phase === 'running' || observedExecution.phase === 'waiting_input' || observedExecution.phase === 'idle'
+      ? observedExecution.phase : 'unknown';
+    return { nativeSession: target.nativeSession, exists: true, execution: observedExecution,
+      controlGrantValid: !binding.detached, limitations: [...LIMITATIONS], activity: { coverage: 'unknown', truncated: false,
+        nodes: [{ nativeSession: target.nativeSession, relation: 'root', phase: activityPhase }] } };
   }
   async output(ctx: CallContext, input: { readonly target: RuntimeTarget; readonly after?: string; readonly limit: number }): Promise<OutputPage> {
     const { binding, thread } = await this.thread(ctx, input.target);
@@ -68,14 +180,29 @@ export class CodexObservation {
     const attempt = binding.attempt;
     if (!attempt) return;
     const turn = thread.turns.find((candidate) => candidate.id === attempt.turnId);
-    if (!turn || turn.status !== 'completed') return;
-    const summary = turn.items.flatMap((item) => {
-      const parsed = agentMessageSchema.safeParse(item);
-      return parsed.success ? [parsed.data.text] : [];
-    }).join('\n').slice(0, 64 * 1024);
-    if (!summary) return;
-    yield { sourceEventId: `result:${turn.id}:${digest(summary)}`, streamScope: target.hubSessionId,
-      nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration, observedAt: new Date().toISOString(),
-      payload: { type: 'result.submitted', attemptId: attempt.id, summary, referenceIds: [] } };
+    if (turn?.status === 'completed') {
+      const summary = turn.items.flatMap((item) => {
+        const parsed = agentMessageSchema.safeParse(item);
+        return parsed.success && parsed.data.phase === 'final_answer' ? [parsed.data.text] : [];
+      }).join('\n').slice(0, 64 * 1024);
+      if (summary) yield { sourceEventId: `result:${turn.id}:${digest(summary)}`, streamScope: target.hubSessionId,
+        nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration, observedAt: new Date().toISOString(),
+        payload: { type: 'result.submitted', attemptId: attempt.id, summary, referenceIds: [] } };
+    }
+    for (const event of this.protocol.drainEvents()) {
+      const question = nativeQuestion(this.state, binding, target, event);
+      if (question !== undefined) { yield question; continue; }
+      if (event.method === 'workhub/serverRequestUnsupported') {
+        const unsupported = unsupportedServerRequestSchema.safeParse(event.params);
+        if (unsupported.success && (unsupported.data.threadId === undefined || unsupported.data.threadId === binding.nativeId)) {
+          yield { sourceEventId: `unsupported:${digest(unsupported.data)}`, streamScope: target.hubSessionId,
+            nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration, observedAt: new Date().toISOString(),
+            payload: { type: 'gap', reason: 'This Codex interaction requires an authenticated native Codex client.' } };
+        }
+        continue;
+      }
+      const mapped = lifecycleExtension(target, event);
+      if (mapped !== undefined) yield mapped;
+    }
   }
 }
