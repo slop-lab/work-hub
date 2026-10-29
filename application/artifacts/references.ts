@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { akbContextRequestSchema, akbSourceReferenceSchema } from '../connectors/akb/schema.ts';
 import { requireProject, type Actor } from '../domain/authorization.ts';
 import { forbidden, invalid } from '../domain/errors.ts';
 import type { Store } from '../persistence/database.ts';
@@ -18,6 +19,45 @@ export const externalCaptureSchema = externalCaptureSelectionSchema.extend({
   title: z.string().min(1).max(500), retainedText: z.string().max(131072),
   mimeType: z.string().min(1).max(200), sourceRevision: z.string().min(1).max(500),
   provenance: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+});
+
+export const externalContextCaptureSelectionSchema = z.strictObject({
+  commandId: z.string().min(1).max(200),
+  taskId: z.string().min(1),
+  installationId: z.string().min(1).max(200),
+  contextRequest: akbContextRequestSchema,
+});
+
+const externalContextSourceSchema = akbSourceReferenceSchema.extend({
+  schemaVersion: z.union([z.string().min(1).max(200), z.number().int().nonnegative()]),
+  revisionCreatedAt: z.iso.datetime(),
+  title: z.string().min(1).max(500),
+  canonicalData: z.json(),
+});
+
+export const externalContextCaptureSchema = externalContextCaptureSelectionSchema.extend({
+  contentBytes: z.number().int().nonnegative().max(256 * 1024),
+  sources: z.array(externalContextSourceSchema).min(1).max(25).readonly(),
+}).superRefine((capture, context) => {
+  const sourceKeys = new Set(capture.sources.map((source) => `${source.kind}\u0000${source.id}\u0000${source.revision}`));
+  if (sourceKeys.size !== capture.sources.length) {
+    context.addIssue({ code: 'custom', path: ['sources'], message: 'Captured AKB sources must be unique.' });
+  }
+  if (capture.contentBytes > capture.contextRequest.maxBytes) {
+    context.addIssue({ code: 'custom', path: ['contentBytes'], message: 'AKB context exceeds the selected byte budget.' });
+  }
+  const retainedBytes = Buffer.byteLength(JSON.stringify(capture.sources.map((source) => source.canonicalData)));
+  if (retainedBytes > capture.contextRequest.maxBytes) {
+    context.addIssue({ code: 'custom', path: ['sources'], message: 'Retained AKB canonical data exceeds the selected byte budget.' });
+  }
+  if ('references' in capture.contextRequest) {
+    const requested = new Set(capture.contextRequest.references.map((reference) =>
+      `${reference.kind}\u0000${reference.id}\u0000${reference.revision}`));
+    if (requested.size !== sourceKeys.size || [...requested].some((key) => !sourceKeys.has(key))) {
+      context.addIssue({ code: 'custom', path: ['sources'],
+        message: 'AKB returned sources that do not match the explicit context selection.' });
+    }
+  }
 });
 export class ReferenceRepository {
   readonly store: Store;
@@ -69,6 +109,26 @@ export class ReferenceRepository {
       'available', capture.sourceRevision, now, now,
     );
     return { kind: 'reference' as const, id, revision: 1 as const };
+  }
+  captureExternalContext(actor: Actor, input: z.infer<typeof externalContextCaptureSchema>) {
+    const capture = externalContextCaptureSchema.parse(input);
+    this.assertExternalCaptureAccess(actor, capture.taskId);
+    const now = this.store.clock.now().toISOString();
+    return capture.sources.map((source) => {
+      const retainedText = JSON.stringify(source.canonicalData);
+      const id = newId('reference');
+      this.store.database.prepare(`INSERT INTO references_store(
+        id,workspace_id,task_id,kind,title,mime_type,provenance_json,locator_json,retained_text,
+        availability,content_revision,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        id, actor.workspaceId, capture.taskId, 'text', source.title, 'application/json',
+        JSON.stringify({ provider: 'akb', installationId: capture.installationId, kind: source.kind,
+          id: source.id, revision: source.revision, schemaVersion: source.schemaVersion,
+          revisionCreatedAt: source.revisionCreatedAt, retainedByHub: true, contentDigest: digest(retainedText) }),
+        null, retainedText, 'available', String(source.revision), now, now,
+      );
+      return { kind: 'reference' as const, id, revision: 1 as const };
+    });
   }
   get(actor: Actor, id: string) {
     const raw = this.store.database.prepare('SELECT id,task_id AS taskId,kind,title,mime_type AS mimeType,provenance_json AS provenanceJson,locator_json AS locatorJson,retained_text AS retainedText,availability,content_revision AS contentRevision,created_at AS createdAt FROM references_store WHERE workspace_id=? AND id=?').get(actor.workspaceId, id);
