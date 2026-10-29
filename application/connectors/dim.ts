@@ -9,8 +9,10 @@ import type { ConnectorLedger } from './ledger.ts';
 
 export const dimConnectionSchema = z.strictObject({
   installationId: z.string().min(1), label: z.string().min(1),
-  endpoint: z.url().refine((value) => { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) &&
-    !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash; }),
+  endpoint: z.url().refine((value) => { const url = new URL(value);
+    const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+    return (url.protocol === 'https:' || url.protocol === 'http:' && loopback) &&
+      !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash; }),
   token: z.string().min(1), hostId: z.string().min(1), workspaceId: z.uuid(),
   incarnation: z.string().min(1), displayName: z.string().min(1),
   identityExpiresAt: z.iso.datetime(), runtimeInstallationId: z.string(),

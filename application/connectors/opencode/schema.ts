@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import { EnvironmentUseGrantSchema } from '../../contracts/execution.ts';
 
+function trustedTransport(url: URL): boolean {
+  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+  return url.protocol === 'https:' || url.protocol === 'http:' && loopback;
+}
+
 export const connectionSchema = z.strictObject({
   installationId: z.string().min(1), label: z.string().min(1),
   origin: z.url().refine((value) => {
     const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password &&
+    return trustedTransport(url) && !url.username && !url.password &&
       url.pathname === '/' && !url.search && !url.hash;
   }),
   directory: z.string().startsWith('/'),
@@ -13,7 +18,7 @@ export const connectionSchema = z.strictObject({
   nativeUrlTemplate: z.string().optional().refine((template) => {
     if (template === undefined) return true;
     const url = new URL(template.replace('{sessionID}', 'session'));
-    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
+    return trustedTransport(url) && !url.username && !url.password && !url.search && !url.hash;
   }),
   recipient: z.strictObject({ hostId: z.string().min(1), workspaceId: z.string().uuid(),
     incarnation: z.string().min(1) }).optional(),
