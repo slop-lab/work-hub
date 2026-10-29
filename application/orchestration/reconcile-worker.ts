@@ -9,6 +9,8 @@ import type { ExecutionRepository } from "../persistence/execution-repository.ts
 import type { InteractionRepository } from "../persistence/interaction-repository.ts";
 import type { ObservationRepository } from "../persistence/observation-repository.ts";
 import type { ResultRepository } from "../persistence/result-repository.ts";
+import type { LifecycleRepository } from "../persistence/lifecycle-repository.ts";
+import type { WorkRepository } from "../persistence/work-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
 import type { ConnectorRegistry } from "./connectors.ts";
 import { RuntimeEventReconciler } from "./runtime-event-reconciler.ts";
@@ -27,7 +29,8 @@ export class ReconcileWorker {
     readonly connectors: ConnectorRegistry; readonly state: StateRepository;
     readonly observation: ObservationRepository;
     readonly execution: ExecutionRepository; readonly interactions: InteractionRepository;
-    readonly results: ResultRepository; readonly subscriptionBudgetMs?: number;
+    readonly results: ResultRepository; readonly lifecycle?: LifecycleRepository; readonly work?: WorkRepository;
+    readonly subscriptionBudgetMs?: number;
     readonly maxEventsPerBinding?: number; readonly readBudgetMs?: number;
   };
   private runtimeCursor: string | undefined;
@@ -38,6 +41,8 @@ export class ReconcileWorker {
     this.events = new RuntimeEventReconciler({
       state: input.state, execution: input.execution,
       interactions: input.interactions, results: input.results,
+      ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
+      ...(input.work === undefined ? {} : { work: input.work }),
     });
   }
 

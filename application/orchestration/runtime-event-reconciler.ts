@@ -11,12 +11,16 @@ import type { ExecutionRepository } from "../persistence/execution-repository.ts
 import type { InteractionRepository } from "../persistence/interaction-repository.ts";
 import type { ResultRepository } from "../persistence/result-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
+import type { LifecycleRepository } from "../persistence/lifecycle-repository.ts";
+import type { WorkRepository } from "../persistence/work-repository.ts";
+import { z } from "zod";
 import { canonicalJson, digest } from '../persistence/codec.ts';
 
 export class RuntimeEventReconciler {
   private readonly input: {
     readonly state: StateRepository; readonly execution: ExecutionRepository;
     readonly interactions: InteractionRepository; readonly results: ResultRepository;
+    readonly lifecycle?: LifecycleRepository; readonly work?: WorkRepository;
   };
 
   constructor(input: RuntimeEventReconciler["input"]) { this.input = input; }
@@ -90,7 +94,7 @@ export class RuntimeEventReconciler {
             sourceInstallationId: installationId, nativeSession: event.nativeSession,
             sourceEventId, contentDigest: digest(event.payload.summary),
             observation: 'Captured runtime report, not independent commit or CI verification.',
-          }) }], outcome: "unspecified" });
+          }) }], outcome: "unspecified", kind: "checkpoint", criterionEvidence: [] });
         return;
       }
       case "gap":
@@ -98,10 +102,45 @@ export class RuntimeEventReconciler {
           bindingGeneration: event.bindingGeneration, sourceItemId: sourceEventId,
           item: { kind: "gap", reason: event.payload.reason, observedAt: event.observedAt } });
         return;
-      case "extension": return;
+      case "extension": this.applyLifecycleExtension(workspaceId, sessionId, installationId,
+        event.payload.namespace, event.payload.data); return;
         default: return assertNever(event.payload);
       }
     });
+  }
+
+  private applyLifecycleExtension(workspaceId: string, sessionId: string, installationId: string,
+    namespace: string, data: Readonly<Record<string, unknown>>): void {
+    const session = this.input.execution.getSession(workspaceId, sessionId);
+    const parsed = z.object({ kind: z.string() }).passthrough().safeParse(data);
+    if (!parsed.success) return;
+    if (this.input.lifecycle === undefined || this.input.work === undefined) return;
+    this.input.work.addEntry(workspaceId, session.taskId, `runtime:${installationId}`, "runtime_report", {
+      providerLifecycle: { namespace, ...parsed.data }, sessionId,
+      ...(session.activeAttemptId === undefined ? {} : { attemptId: session.activeAttemptId }),
+    });
+    if (session.activeAttemptId === undefined) return;
+    if (namespace === "workhub.codex.lifecycle.v1") {
+      if (parsed.data.kind === "retry_observed") this.input.lifecycle.reconcileAttempt({ workspaceId,
+        attemptId: session.activeAttemptId, interruption: "retryable_failure",
+        recovery: parsed.data["willRetry"] === true ? "observe" : "reconcile" });
+      if (parsed.data.kind === "provider_error_observed" && parsed.data["willRetry"] !== true) {
+        this.input.lifecycle.reconcileAttempt({ workspaceId, attemptId: session.activeAttemptId,
+          interruption: "retryable_failure", recovery: "reconcile" });
+      }
+      return;
+    }
+    if (namespace !== "workhub.claude.lifecycle.v1") return;
+    if (parsed.data.kind === "retry") this.input.lifecycle.reconcileAttempt({ workspaceId,
+      attemptId: session.activeAttemptId, interruption: "retryable_failure", recovery: "observe" });
+    if (parsed.data.kind === "rate_limit" && parsed.data["status"] === "rejected") {
+      this.input.lifecycle.reconcileAttempt({ workspaceId, attemptId: session.activeAttemptId,
+        interruption: "retryable_failure", recovery: "observe" });
+    }
+    if (parsed.data.kind === "state" && parsed.data["state"] === "requires_action") {
+      this.input.lifecycle.reconcileAttempt({ workspaceId, attemptId: session.activeAttemptId,
+        interruption: "awaiting_input", recovery: "observe" });
+    }
   }
 
   applyExecution(workspaceId: string, attemptId: string, observation: {
