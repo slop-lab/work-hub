@@ -1,6 +1,7 @@
 import type { CallContext, ExecutionObservation, OutputPage, RuntimeEvent, RuntimeSessionObservation, RuntimeTarget } from '../../contracts/index.ts';
 import { digest } from '../../persistence/codec.ts';
 import type { OpenCodeClient } from './client.ts';
+import { OpenCodeActivity } from './activity.ts';
 import type { OpenCodeState } from './state.ts';
 import type { Binding, NativeMessage, NativeQuestion } from './schema.ts';
 
@@ -15,13 +16,25 @@ function affiliatedQuestions(binding: Binding, messages: readonly NativeMessage[
 export class OpenCodeObservation {
   readonly client: OpenCodeClient;
   readonly state: OpenCodeState;
-  constructor(client: OpenCodeClient, state: OpenCodeState) { this.client = client; this.state = state; }
+  private readonly activity: OpenCodeActivity;
+  constructor(client: OpenCodeClient, state: OpenCodeState) {
+    this.client = client; this.state = state; this.activity = new OpenCodeActivity(client);
+  }
+
+  private async inspectActivity(ctx: CallContext, target: RuntimeTarget, binding: Binding, messages: readonly NativeMessage[]) {
+    const activity = await this.activity.observe(ctx, binding, messages);
+    if (binding.attempt && JSON.stringify(binding.attempt.activitySessions) !== JSON.stringify(activity.sessions)) {
+      this.state.save(ctx, target.hubSessionId, { ...binding, attempt: { ...binding.attempt, activitySessions: [...activity.sessions] } });
+    }
+    return activity;
+  }
 
   async inspect(ctx: CallContext, target: RuntimeTarget): Promise<RuntimeSessionObservation> {
     const binding = this.state.target(ctx, target);
     await this.client.session(ctx, binding.nativeId);
     const messages = await this.client.messages(ctx, binding.nativeId);
     const questions = affiliatedQuestions(binding, messages, await this.client.questions(ctx, binding.nativeId));
+    const activity = await this.inspectActivity(ctx, target, binding, messages);
     const pending = questions.map((question) => this.state.reference('question', question.id));
     let execution: ExecutionObservation = { phase: 'unknown', pendingNativeRequestRefs: pending };
     if (binding.attempt) {
@@ -31,6 +44,7 @@ export class OpenCodeObservation {
       const associated = { hubAttemptId: attempt.id,
         nativeExecutionRef: this.state.reference('execution', attempt.messageId), pendingNativeRequestRefs: pending };
       if (questions.length) execution = { ...associated, phase: 'waiting_input' };
+      else if (activity.phase !== 'idle' && assistant?.info.time.completed) execution = { ...associated, phase: activity.phase };
       else if (assistant?.info.error) execution = { ...associated, phase: 'ended', termination: 'failed' };
       else if (assistant?.info.time.completed && assistant.info.finish === 'stop') execution = {
         ...associated, phase: 'ended', termination: 'completed', endedAt: new Date(assistant.info.time.completed).toISOString(),
@@ -42,6 +56,7 @@ export class OpenCodeObservation {
       controlGrantValid: !binding.detached, limitations: [
         'Native permissions and unsupported question shapes require the native view.',
         'Idle and HTTP 204 are not start or success evidence. External clients may also control this session.',
+        ...activity.limitations,
       ] };
   }
 
@@ -74,6 +89,7 @@ export class OpenCodeObservation {
     const attempt = binding.attempt;
     if (!attempt) return;
     const messages = await this.client.messages(ctx, binding.nativeId);
+    const activity = await this.inspectActivity(ctx, target, binding, messages);
     const envelope = { nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration,
       streamScope: target.hubSessionId, observedAt: new Date().toISOString() };
     for (const question of affiliatedQuestions(binding, messages, await this.client.questions(ctx, binding.nativeId))) {
@@ -94,7 +110,7 @@ export class OpenCodeObservation {
     }
     const latest = attempt.messageIds.at(-1);
     for (const message of messages) {
-      if (message.info.role !== 'assistant' || message.info.parentID !== latest || !message.info.time.completed ||
+      if (activity.phase !== 'idle' || message.info.role !== 'assistant' || message.info.parentID !== latest || !message.info.time.completed ||
         message.info.error || message.info.finish !== 'stop') continue;
       const summary = message.parts.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('\n').slice(0, 64 * 1024);
       if (summary) yield { ...envelope, sourceEventId: `result:${message.info.id}:${digest(summary)}`, payload: {
