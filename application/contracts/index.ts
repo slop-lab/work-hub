@@ -4,3 +4,4 @@ export * from "./execution.ts";
 export * from "./receipts.ts";
 export * from "./runtime.ts";
 export * from './connector-inputs.ts';
+export * from "./handoff.ts";
