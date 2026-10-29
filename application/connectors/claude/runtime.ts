@@ -3,16 +3,19 @@ import type { ActionContext, AgentRuntimeConnector, AttemptStart, CallContext, I
   ResponseDelivery, RuntimeBindingDescriptor, RuntimeControlGrant, RuntimeRoute, RuntimeTarget, StopInput } from '../../contracts/index.ts';
 import { InputReceiptSchema, RuntimeBindingDescriptorSchema, RuntimeDetachedResultSchema } from '../../contracts/index.ts';
 import { HubError } from '../../domain/errors.ts';
+import { digest } from '../../persistence/codec.ts';
 import type { ConnectorLedger } from '../ledger.ts';
 import { claudeCapabilities, claudeManifest } from './capabilities.ts';
 import { OfficialClaudeSdkDriver, type ClaudeSdkDriver } from './driver.ts';
-import { claudeConnectionSchema, claudeDiscoverySchema, claudeSelectionSchema, type ClaudeBoundMessage,
-  type ClaudeConnection, type ClaudeDiscovery, type ClaudeMessage } from './schema.ts';
+import { ClaudeObservation } from './observation.ts';
+import { claudeConnectionSchema, claudeDiscoverySchema, claudeSelectionSchema,
+  type ClaudeBoundMessage, type ClaudeConnection, type ClaudeDiscovery } from './schema.ts';
 import { ClaudeState } from './state.ts';
 
 export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
   readonly state: ClaudeState;
   private readonly driver: ClaudeSdkDriver;
+  private readonly observation: ClaudeObservation;
   private acceptingInput = true;
   private readonly activeInputs = new Set<Promise<void>>();
 
@@ -20,6 +23,7 @@ export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
     const connection = claudeConnectionSchema.parse(connectionInput);
     this.state = new ClaudeState(ledger, connection);
     this.driver = driver ?? new OfficialClaudeSdkDriver(connection);
+    this.observation = new ClaudeObservation(this.state);
   }
 
   describe() { return { manifest: claudeManifest, capabilities: claudeCapabilities }; }
@@ -135,7 +139,10 @@ export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
       throw new HubError({ code: 'claude_workarea_denied', category: 'authorization',
         message: 'The attempt exceeds its bound environment use grant.', retry: 'never' });
     }
-    const prompt = start ? JSON.stringify(input.input) : input.text;
+    const prompt = start ? input.input.instruction : input.text;
+    if (start && input.input.promptDigest !== undefined && digest(prompt) !== input.input.promptDigest) throw new HubError({
+      code: 'claude_prompt_digest_mismatch', category: 'conflict',
+      message: 'The rendered handoff prompt digest no longer matches the immutable input snapshot.', retry: 'never' });
     return this.state.ledger.execute(ctx, { kind: start ? 'runtime.startAttempt' : 'runtime.sendInstruction',
       schemaId: 'workhub.runtime.input-receipt.v1', schema: InputReceiptSchema, input,
       effect: start ? 'attempt.input_received' : 'instruction.accepted_by_runtime' }, async () => {
@@ -161,44 +168,16 @@ export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
   async requestStop(_ctx: ActionContext, _input: StopInput): Promise<never> { throw unsupported('stop'); }
 
   async inspectSession(ctx: CallContext, target: RuntimeTarget) {
-    const binding = this.state.target(ctx, target);
-    const results = binding.messages.filter((entry): entry is ClaudeBoundMessage & {
-      readonly message: Extract<ClaudeMessage, { kind: 'result' }>
-    } => entry.attemptId === binding.attempt?.id && entry.message.kind === 'result');
-    const result = binding.attempt === undefined ? undefined : results.at(-1)?.message;
-    const execution = binding.attempt === undefined ? { phase: 'unknown' as const, pendingNativeRequestRefs: [] } : result === undefined ?
-      { hubAttemptId: binding.attempt.id, phase: 'unknown' as const, pendingNativeRequestRefs: [] } : {
-        hubAttemptId: binding.attempt.id, phase: 'ended' as const,
-        termination: result.outcome === 'completed' ? 'completed' as const : result.outcome === 'interrupted' ? 'stopped' as const : 'failed' as const,
-        endedAt: result.observedAt, pendingNativeRequestRefs: [],
-      };
-    return { value: { nativeSession: target.nativeSession, exists: true, execution, controlGrantValid: !binding.detached,
-      limitations: ['Only Hub-initiated main-thread Agent SDK turns are replayed. Native questions and approvals require Claude Code.',
-        'Input confirmation currently waits for the turn result because the stable SDK provides no durable standalone submit receipt.'] },
+    return { value: this.observation.inspect(ctx, target),
       sourceInstallationId: ctx.installationId, observedAt: new Date().toISOString(), assurance: 'reported' as const, limitations: [] };
   }
 
   async readOutput(ctx: CallContext, input: { readonly target: RuntimeTarget; readonly after?: string; readonly limit: number }) {
-    const binding = this.state.target(ctx, input.target);
-    const visible = binding.messages.filter((entry) => entry.message.kind === 'assistant');
-    const offset = input.after === undefined ? 0 : visible.findIndex((entry) => entry.message.id === input.after) + 1;
-    const page = visible.slice(offset, offset + Math.max(1, Math.min(input.limit, 100)));
-    return { items: page.map((entry) => ({ sourceItemId: entry.message.id, kind: 'message' as const, role: 'agent' as const,
-      text: entry.message.kind === 'assistant' ? entry.message.text : '', observedAt: entry.message.observedAt,
-      hubAttemptId: entry.attemptId, nativeExecutionRef: this.state.reference('execution', entry.inputId) })),
-      ...(page.at(-1) === undefined ? {} : { nextCursor: page.at(-1)?.message.id ?? '' }), coverage: 'partial' as const,
-      gaps: [{ reason: 'Only output from Hub-initiated Agent SDK turns is retained.' }] };
+    return this.observation.output(ctx, input);
   }
 
-  async *subscribe(ctx: CallContext, input: { readonly target: RuntimeTarget; readonly after?: string }) {
-    const binding = this.state.target(ctx, input.target);
-    for (const entry of binding.messages) {
-      if (entry.message.kind !== 'result') continue;
-      yield { sourceEventId: `result:${entry.message.id}`, streamScope: input.target.hubSessionId,
-        nativeSession: input.target.nativeSession, bindingGeneration: input.target.bindingGeneration,
-        observedAt: entry.message.observedAt, payload: { type: 'result.submitted' as const, attemptId: entry.attemptId,
-          summary: entry.message.summary, referenceIds: [] } };
-    }
+  subscribe(ctx: CallContext, input: { readonly target: RuntimeTarget; readonly after?: string }) {
+    return this.observation.events(ctx, input);
   }
 
   async detachSession(ctx: ActionContext, target: RuntimeTarget) {

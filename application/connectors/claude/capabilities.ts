@@ -16,13 +16,17 @@ export const claudeCapabilities: RuntimeCapabilities = {
 };
 
 export const claudeManifest: ConnectorManifest = {
-  id: 'workhub.claude-code', kind: 'agent_runtime', implementationVersion: '0.1.0', contractMajor: 1,
+  id: 'workhub.claude-code', kind: 'agent_runtime', implementationVersion: '0.2.0', contractMajor: 1,
   configurationSchemaId: claudeCapabilities.configurationSchemaId, requiredSecretPurposes: [],
   requiredPermissions: ['session.control'],
   operationSafety: Object.fromEntries(['openSession', 'startAttempt', 'sendInstruction', 'detachSession'].map((method) =>
     [method, { deduplicatesByClientOperationId: false, lookupByClientOperationId: true, replayAfterUnknown: 'never' }])),
   extensions: { simulated: false, sdkPackage: '@anthropic-ai/claude-agent-sdk', sdkVersion: '0.3.311',
-    emptySessionCreation: false, nativePromptIdempotency: false,
-    approvals: 'No broad native tool approval is granted by this connector.',
-    inputConfirmation: 'A confirmed input receipt waits for the exact echoed user UUID on the turn result.' },
+     emptySessionCreation: false, nativePromptIdempotency: false,
+     approvals: 'No broad native tool approval is granted by this connector.',
+     inputConfirmation: 'A confirmed input receipt waits for the exact echoed user UUID; unknown delivery is never resent.',
+     lifecycleFrames: 'Checkpoint, final, tool, subagent, retry, rate-limit, startup and terminal metadata are mapped from exact Agent SDK fields.',
+     activityCoverage: 'Parent completion is withheld when observed subagent work is active or registry coverage is partial.',
+     liveValidation: 'Authenticated Claude Code execution remains an explicit operator validation gap until scoped credentials are supplied.',
+     stop: 'Request-stop remains unsupported because aborting an accepted SDK turn is not an exact safe stop contract.' },
 };
