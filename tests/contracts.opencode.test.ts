@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { OpenCodeRuntimeConnector } from '../application/connectors/opencode/runtime.ts';
+import { digest } from '../application/persistence/codec.ts';
 import { context, openCodeFixture } from './opencode-fixture.ts';
 
 test('discovery uses configured providers rather than downloading the global model catalog', async () => {
@@ -132,5 +133,30 @@ test('runtime input requires the recorded control grant in the action context', 
     await fixture.open();
     await assert.rejects(fixture.connector.startAttempt({ ...context('start'), authorizedGrantRefs: [] }, fixture.input), /grant/);
     assert.equal(fixture.calls.some((call) => call.path.endsWith('prompt_async')), false);
+  } finally { await fixture.close(); }
+});
+
+test('verification handoff sends the canonical rendered instruction rather than snapshot JSON', async () => {
+  const fixture = await openCodeFixture();
+  try {
+    await fixture.open();
+    const instruction = 'Canonical verification handoff prompt';
+    const receipt = await fixture.connector.startAttempt(context('start'), { ...fixture.input,
+      input: { ...fixture.input.input, instruction, promptDigest: digest(instruction) } });
+    const prompt = fixture.calls.find((call) => call.path.endsWith('/prompt_async'))?.body;
+    assert.equal(receipt.status, 'confirmed');
+    assert.deepEqual(prompt, { messageID: receipt.status === 'confirmed' ? receipt.result.nativeInputRef?.id : undefined,
+      agent: fixture.input.target.nativeSession.id === 'ses_fixture' ? 'fixture-agent' : '',
+      model: { providerID: 'fixture-provider', modelID: 'fixture-model' }, parts: [{ type: 'text', text: instruction }] });
+  } finally { await fixture.close(); }
+});
+
+test('stale verification prompt digest is rejected before native delivery', async () => {
+  const fixture = await openCodeFixture();
+  try {
+    await fixture.open();
+    await assert.rejects(fixture.connector.startAttempt(context('start'), { ...fixture.input,
+      input: { ...fixture.input.input, instruction: 'Changed after preview', promptDigest: digest('Original preview') } }), /prompt digest/);
+    assert.equal(fixture.calls.some((call) => call.path.endsWith('/prompt_async')), false);
   } finally { await fixture.close(); }
 });

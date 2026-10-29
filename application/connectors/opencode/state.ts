@@ -11,7 +11,9 @@ export class OpenCodeState {
   }
   reference(kind: string, id: string): NativeRef {
     return { installationId: this.connection.installationId,
-      providerScope: this.connection.directory, kind, id };
+      providerScope: this.connection.directory, kind, id,
+      ...((this.connection.recipient ?? this.connection.environment) === undefined ? {} : {
+        incarnation: (this.connection.recipient ?? this.connection.environment)?.incarnation }) };
   }
   get(ctx: CallContext, hubSessionId: string): Binding | undefined {
     this.checkInstallation(ctx);
