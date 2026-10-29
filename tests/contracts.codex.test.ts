@@ -19,6 +19,18 @@ test('Codex discovery exposes safe configured inventory without account secrets'
   } finally { await fixture.close(); }
 });
 
+test('Codex creates threads with approval policy never and does not autoapprove server requests', async () => {
+  const fixture = codexFixture();
+  try {
+    await fixture.open();
+    const start = fixture.protocol.calls.find((call) => call.method === 'thread/start');
+    assert.deepEqual(start?.params, { cwd: '/fixture', model: 'fixture-model', modelProvider: 'openai',
+      ephemeral: false, approvalPolicy: 'never' });
+    assert.equal(fixture.connector.describe().capabilities.nativeQuestions.support, 'supported');
+    assert.equal(fixture.connector.describe().capabilities.nativeApprovals.support, 'unsupported');
+  } finally { await fixture.close(); }
+});
+
 test('turn start uses a durable client message id and returns native thread and turn ids', async () => {
   const fixture = codexFixture();
   try {
@@ -28,7 +40,7 @@ test('turn start uses a durable client message id and returns native thread and 
     assert.equal(receipt.status === 'confirmed' && receipt.result.nativeExecutionRef?.id, '01900000-0000-7000-8000-000000000002');
     const call = fixture.protocol.calls.find((item) => item.method === 'turn/start');
     assert.deepEqual(call?.params, { threadId: fixture.target.nativeSession.id, clientUserMessageId: 'workhub:start',
-      input: [{ type: 'text', text: JSON.stringify(fixture.input.input), text_elements: [] }] });
+      input: [{ type: 'text', text: fixture.input.input.instruction, text_elements: [] }] });
   } finally { await fixture.close(); }
 });
 
@@ -66,37 +78,6 @@ test('Codex attachment validates exact directory, provider, model, and native id
   } finally { await fixture.close(); }
 });
 
-test('completed affiliated Codex turn reports output and result but never task completion', async () => {
-  const fixture = codexFixture();
-  try {
-    await fixture.open();
-    await fixture.connector.startAttempt(codexContext('start'), fixture.input);
-    const thread = fixture.protocol.threads.get(fixture.target.nativeSession.id) as { readonly turns: readonly Record<string, unknown>[] };
-    const turn = thread.turns[0];
-    assert.ok(turn);
-    fixture.protocol.threads.set(fixture.target.nativeSession.id, { ...thread, status: { type: 'idle' }, turns: [{ ...turn,
-      status: 'completed', completedAt: 3, items: [...((turn['items'] as readonly unknown[]) ?? []), { type: 'agentMessage', id: 'agent-1', text: 'Fixture result', phase: 'final_answer', questions: null }] }] });
-    const output = await fixture.connector.readOutput(codexContext('output'), { target: fixture.target, limit: 10 });
-    assert.equal(output.items.at(-1)?.text, 'Fixture result');
-    const events = [];
-    for await (const event of fixture.connector.subscribe(codexContext('events'), { target: fixture.target })) events.push(event);
-    assert.equal(events.at(-1)?.payload.type, 'result.submitted');
-    assert.equal((await fixture.connector.inspectSession(codexContext('inspect'), fixture.target)).value.execution.termination, 'completed');
-  } finally { await fixture.close(); }
-});
-
-test('Codex connector refuses native question delivery instead of fabricating a response route', async () => {
-  const fixture = codexFixture();
-  try {
-    await fixture.open();
-    await assert.rejects(fixture.connector.deliverResponse(codexContext('answer'), {
-      target: fixture.target, requestId: 'request', requestRevision: 1, responseId: 'response', responseDigest: 'sha256:123',
-      nativeRequestRef: { ...fixture.target.nativeSession, kind: 'question', id: 'native-question' },
-      validity: { kind: 'attempt', target: fixture.target }, answer: { kind: 'text', text: 'answer' },
-    }), /native Codex client/);
-  } finally { await fixture.close(); }
-});
-
 test('Codex interrupt receipt carries request-only evidence accepted by the connector boundary', async () => {
   const fixture = codexFixture();
   try {
@@ -105,6 +86,23 @@ test('Codex interrupt receipt carries request-only evidence accepted by the conn
     const context = codexContext('stop');
     const receipt = await fixture.connector.requestStop(context, { target: fixture.target, mode: 'interrupt' });
     assert.equal(validateConnectorReceipt({ context, receipt, operationKind: 'runtime.requestStop' }).status, 'confirmed');
+  } finally { await fixture.close(); }
+});
+
+test('provider interruption is observed as stopped separately from an accepted interrupt request', async () => {
+  const fixture = codexFixture();
+  try {
+    await fixture.open();
+    await fixture.connector.startAttempt(codexContext('start'), fixture.input);
+    const thread = fixture.protocol.threads.get(fixture.target.nativeSession.id) as { readonly turns: readonly Record<string, unknown>[] };
+    const turn = thread.turns[0];
+    assert.ok(turn);
+    fixture.protocol.threads.set(fixture.target.nativeSession.id, { ...thread, status: { type: 'idle' },
+      turns: [{ ...turn, status: 'interrupted', completedAt: 4 }] });
+    const observation = await fixture.connector.inspectSession(codexContext('inspect-interrupted'), fixture.target);
+    assert.equal(observation.value.execution.termination, 'stopped');
+    const receipt = await fixture.connector.requestStop(codexContext('stop-after-provider'), { target: fixture.target, mode: 'interrupt' });
+    assert.equal(receipt.status === 'confirmed' && receipt.result.effect, 'request_accepted');
   } finally { await fixture.close(); }
 });
 

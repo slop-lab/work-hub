@@ -14,6 +14,8 @@ export class FakeCodexProtocol implements CodexProtocol {
   readonly calls: { readonly method: string; readonly params: unknown }[] = [];
   readonly events: CodexProtocolEvent[] = [];
   readonly threads = new Map<string, unknown>();
+  readonly serverResponses: { readonly nativeRequestId: string; readonly result: unknown }[] = [];
+  readonly serverRequests = new Map<string, CodexProtocolEvent>();
   persistTurn = true;
   authenticated = true;
   async version(): Promise<string> { return '0.164.0'; }
@@ -42,7 +44,7 @@ export class FakeCodexProtocol implements CodexProtocol {
           error: null, items: [{ type: 'userMessage', id: 'user-1', clientId: input.clientUserMessageId, content: input.input }] };
         if (this.persistTurn) {
           const thread = this.threads.get(input.threadId) as { readonly turns: readonly unknown[] };
-          this.threads.set(input.threadId, { ...thread, status: { type: 'active' }, turns: [...thread.turns, turn] });
+          this.threads.set(input.threadId, { ...thread, status: { type: 'active', activeFlags: [] }, turns: [...thread.turns, turn] });
         }
         return { turn };
       }
@@ -60,6 +62,14 @@ export class FakeCodexProtocol implements CodexProtocol {
   trackAcceptedTurn(_threadId: string, _clientId: string, _turnId: string): void {}
   forgetSubmission(_threadId: string, _clientId: string): void {}
   drainEvents(): readonly CodexProtocolEvent[] { return this.events.splice(0); }
+  queueServerRequest(event: CodexProtocolEvent & { readonly nativeRequestId: string }): void {
+    this.events.push(event); this.serverRequests.set(event.nativeRequestId, event);
+  }
+  pendingServerRequests(): readonly CodexProtocolEvent[] { return [...this.serverRequests.values()]; }
+  async respondServerRequest(nativeRequestId: string, result: unknown): Promise<void> {
+    this.serverResponses.push({ nativeRequestId, result });
+    this.serverRequests.delete(nativeRequestId);
+  }
   async close(): Promise<void> {}
 }
 
@@ -75,8 +85,9 @@ export function codexFixture() {
   const nativeSession = { installationId: 'codex-test', providerScope: '/fixture', kind: 'agent-thread', id: '01900000-0000-7000-8000-000000000001' };
   const target = { hubSessionId: 'logical', hubAttemptId: 'attempt', bindingGeneration: 1,
     controlGrantRef: 'codex:logical', nativeSession };
+  const instruction = 'Fixture work';
   const input: AttemptStart = { target, workAreas: [], input: { id: 'snapshot', digest: digest('snapshot'), taskId: 'task',
-    taskRevision: 1, profileId: 'profile', profileRevision: 1, instruction: 'Fixture work', selectedReferenceIds: [],
-    selectedResponseIds: [], contextItems: [], authorizedEffectKinds: [], assembledAt: new Date(0).toISOString() } };
+    taskRevision: 1, scopeRevision: 1, profileId: 'profile', profileRevision: 1, instruction, promptDigest: digest(instruction),
+    selectedReferenceIds: [], selectedResponseIds: [], contextItems: [], authorizedEffectKinds: [], assembledAt: new Date(0).toISOString() } };
   return { connector, ledger, protocol, connection, open, target, input, close: async () => { await connector.close(); ledger.close(); } };
 }

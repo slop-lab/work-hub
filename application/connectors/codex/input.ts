@@ -26,7 +26,10 @@ export class CodexInput {
       area.key === allowed.key && area.path === allowed.path && area.pathNamespace === allowed.pathNamespace &&
       (area.requestedAccess === 'read' || allowed.requestedAccess === 'write')))) throw new HubError({
       code: 'codex_workarea_denied', category: 'authorization', message: 'The attempt exceeds its bound environment use grant.', retry: 'never' });
-    const text = start ? JSON.stringify(input.input) : input.text;
+    const text = start ? input.input.instruction : input.text;
+    if (start && input.input.promptDigest !== undefined && digest(text) !== input.input.promptDigest) throw new HubError({
+      code: 'codex_prompt_digest_mismatch', category: 'conflict',
+      message: 'The rendered handoff prompt digest no longer matches the immutable input snapshot.', retry: 'never' });
     const effect = start ? 'attempt.input_received' : 'instruction.accepted_by_runtime';
     const delivery = { hubSessionId: input.target.hubSessionId, threadId: binding.nativeId, clientId: `workhub:${ctx.operationId}`,
       attemptId: input.target.hubAttemptId, taskId: start ? input.input.taskId : binding.attempt?.taskId ?? '',
