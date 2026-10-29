@@ -30,6 +30,8 @@ export class HandoffDelegationHandler {
       previewDigest: command.payload.handoff.previewDigest,
       verification: command.payload.handoff.verification,
       recipient: command.payload.handoff.recipient,
+      selectedReferenceIds: command.payload.selectedReferenceIds,
+      selectedResponseIds: command.payload.selectedResponseIds,
     });
   }
 

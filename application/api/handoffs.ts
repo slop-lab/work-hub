@@ -13,7 +13,10 @@ const previewInputSchema = z.strictObject({
   profileId: z.string().min(1), repositoryId: z.string().min(1),
   repositoryRevision: z.number().int().positive(), sourceBranch: z.string().trim().min(1).max(1024),
   sourceCommit: SourceCommitSchema, requestedValidation: z.string().trim().min(1).max(32_768),
-  contextDigest: DigestSchema, recipient: HandoffRecipientSchema,
+  contextDigest: DigestSchema.optional(),
+  selectedReferenceIds: z.array(z.string().min(1)).max(100).default([]),
+  selectedResponseIds: z.array(z.string().min(1)).max(100).default([]),
+  recipient: HandoffRecipientSchema,
 });
 
 export function handoffRoutes(input: {
@@ -29,13 +32,20 @@ export function handoffRoutes(input: {
   app.get("/projects/:id/repositories", (context) => context.json({
     items: input.hub.listProjectRepositories(input.actor(context), context.req.param("id")),
   }));
-  app.post("/tasks/:id/handoffs/preview", async (context) => context.json(
-    input.hub.previewHandoff(input.actor(context), {
-      taskId: context.req.param("id"), ...previewInputSchema.parse(await context.req.json<unknown>()),
-    }),
-  ));
+  app.post("/tasks/:id/handoffs/preview", async (context) => {
+    const parsed = previewInputSchema.parse(await context.req.json<unknown>());
+    return context.json(input.hub.previewHandoff(input.actor(context), {
+      taskId: context.req.param("id"), profileId: parsed.profileId,
+      repositoryId: parsed.repositoryId, repositoryRevision: parsed.repositoryRevision,
+      sourceBranch: parsed.sourceBranch, sourceCommit: parsed.sourceCommit,
+      requestedValidation: parsed.requestedValidation,
+      selectedReferenceIds: parsed.selectedReferenceIds,
+      selectedResponseIds: parsed.selectedResponseIds, recipient: parsed.recipient,
+    }));
+  });
   app.get("/tasks/:id/handoffs", (context) => context.json({
-    items: input.hub.listHandoffs(input.actor(context), context.req.param("id")),
+    items: input.hub.listHandoffs(input.actor(context), context.req.param("id"),
+      z.coerce.number().int().min(1).max(100).default(50).parse(context.req.query("limit"))),
   }));
   app.get("/handoffs/:id", (context) => context.json(
     input.hub.getHandoff(input.actor(context), context.req.param("id")),
