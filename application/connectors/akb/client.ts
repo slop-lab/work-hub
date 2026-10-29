@@ -1,8 +1,24 @@
 import ky, { TimeoutError } from 'ky';
 import { HubError } from '../../domain/errors.ts';
-import { akbPageListResponseSchema, akbPageResponseSchema, type AkbConnection, type AkbPage } from './schema.ts';
+import {
+  akbContextRequestSchema,
+  akbDocumentQuerySchema,
+  akbPageListResponseSchema,
+  akbPageResponseSchema,
+  type AkbConnection,
+  type AkbContextRequest,
+  type AkbDocumentQuery,
+  type AkbPage,
+} from './schema.ts';
 
 const responseLimit = 2 * 1024 * 1024;
+
+type AkbRequestOptions = {
+  readonly method?: 'get' | 'post';
+  readonly json?: AkbContextRequest;
+  readonly unavailableCode?: 'akb_page_unavailable' | 'akb_context_unavailable';
+  readonly invalidCode?: 'akb_context_invalid';
+};
 
 export class AkbClient {
   readonly connection: AkbConnection;
@@ -33,6 +49,28 @@ export class AkbClient {
     return page;
   }
 
+  async findDocuments(value: AkbDocumentQuery): Promise<never> {
+    const query = akbDocumentQuerySchema.parse(value);
+    const path = this.path('/documents');
+    path.searchParams.set('kind', query.kind);
+    path.searchParams.set('query', query.query);
+    path.searchParams.set('limit', String(query.limit));
+    if (query.afterId !== undefined) path.searchParams.set('afterId', query.afterId);
+    await this.request(path);
+    throw new HubError({ code: 'akb_document_contract_unavailable', category: 'unsupported',
+      message: 'AKB document discovery is disabled until its exact response contract is available.',
+      retry: 'manual_action' });
+  }
+
+  async readContext(value: AkbContextRequest): Promise<never> {
+    const input = akbContextRequestSchema.parse(value);
+    await this.request(this.path('/context'), { method: 'post', json: input,
+      unavailableCode: 'akb_context_unavailable', invalidCode: 'akb_context_invalid' });
+    throw new HubError({ code: 'akb_context_contract_unavailable', category: 'unsupported',
+      message: 'AKB context capture is disabled until its exact response contract is available.',
+      retry: 'manual_action' });
+  }
+
   private path(suffix: string): URL {
     return new URL(`/api/content/v1/workspaces/${encodeURIComponent(this.connection.workspaceId)}${suffix}`,
       this.connection.origin);
@@ -48,7 +86,7 @@ export class AkbClient {
       message: 'AKB returned an incompatible content response.', retry: 'manual_action' });
   }
 
-  private async request(url: URL): Promise<unknown> {
+  private async request(url: URL, options: AkbRequestOptions = {}): Promise<unknown> {
     const controller = new AbortController();
     let completed = false;
     let timer: NodeJS.Timeout | undefined;
@@ -59,13 +97,21 @@ export class AkbClient {
     });
     try {
       const operation = (async () => {
-      const response = await ky.get(url, { headers: { authorization: this.connection.authorization }, timeout: false,
-        signal: controller.signal,
-        retry: 0, redirect: 'error', throwHttpErrors: false });
+       const response = await ky(url, { method: options.method ?? 'get',
+         ...(options.json === undefined ? {} : { json: options.json }),
+         headers: { authorization: this.connection.authorization }, timeout: false,
+         signal: controller.signal,
+         retry: 0, redirect: 'error', throwHttpErrors: false });
       if (response.status === 401) throw new HubError({ code: 'akb_authentication_failed', category: 'authentication',
         message: 'AKB rejected the configured backend credential.', retry: 'manual_action' });
-      if (response.status === 403 || response.status === 404) throw new HubError({ code: 'akb_page_unavailable',
-        category: 'authorization', message: 'The AKB Page is missing, revoked, or unreadable.', retry: 'never' });
+       if (response.status === 403 || response.status === 404) throw new HubError({
+         code: options.unavailableCode ?? 'akb_page_unavailable', category: 'authorization',
+         message: options.unavailableCode === 'akb_context_unavailable'
+           ? 'The selected AKB context is missing, revoked, or unreadable.'
+           : 'The AKB Page is missing, revoked, or unreadable.', retry: 'never' });
+       if (response.status === 422 && options.invalidCode !== undefined) throw new HubError({
+         code: options.invalidCode, category: 'validation',
+         message: 'AKB rejected the context selection or byte budget.', retry: 'never' });
       if (!response.ok) throw new HubError({ code: `akb_http_${response.status}`, category: 'provider_failure',
         message: `AKB returned HTTP ${response.status}.`, retry: 'read_only_retry' });
       return JSON.parse(await readBounded(response));

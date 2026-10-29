@@ -20,6 +20,39 @@ export const akbConnectionSchema = z.strictObject({
 
 export type AkbConnection = z.infer<typeof akbConnectionSchema>;
 
+export const akbSourceReferenceSchema = z.strictObject({
+  kind: z.enum(['page', 'knowledge']),
+  id: z.string().min(1).max(200),
+  revision: z.number().int().positive(),
+});
+
+const akbReferencesSchema = z.array(akbSourceReferenceSchema).min(1).max(25).superRefine((references, context) => {
+  const keys = new Set<string>();
+  for (const reference of references) {
+    const key = `${reference.kind}\u0000${reference.id}\u0000${reference.revision}`;
+    if (keys.has(key)) context.addIssue({ code: 'custom', message: 'AKB context references must be unique.' });
+    keys.add(key);
+  }
+});
+
+const akbContextBudgetSchema = z.number().int().positive().max(256 * 1024).default(64 * 1024);
+
+export const akbContextRequestSchema = z.union([
+  z.strictObject({ references: akbReferencesSchema, maxBytes: akbContextBudgetSchema }),
+  z.strictObject({ selectionPage: z.strictObject({ id: z.string().min(1).max(200),
+    revision: z.number().int().positive() }), maxBytes: akbContextBudgetSchema }),
+]);
+
+export const akbDocumentQuerySchema = z.strictObject({
+  kind: z.enum(['page', 'knowledge']),
+  query: z.string().min(1).max(500),
+  limit: z.number().int().positive(),
+  afterId: z.string().min(1).max(200).optional(),
+});
+
+export type AkbContextRequest = z.infer<typeof akbContextRequestSchema>;
+export type AkbDocumentQuery = z.infer<typeof akbDocumentQuerySchema>;
+
 export type AkbBlock = {
   readonly id: string;
   readonly type: 'paragraph' | 'heading' | 'list' | 'list_item' | 'code' | 'quote' | 'table' | 'callout' |
