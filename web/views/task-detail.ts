@@ -1,4 +1,4 @@
-import { commandId } from "../api.ts";
+import { commandId, loadTaskHandoffs } from "../api.ts";
 import { delegationDialog } from "../dialogs.ts";
 import { badge, button, el, findFormValue, formatTime, label, submitButton } from "../dom.ts";
 import type { HubTask } from "../state-schema.ts";
@@ -8,9 +8,11 @@ import { resultSection } from "./result-review.ts";
 import { taskHistory } from "./task-history.ts";
 import { taskActions } from "./task-actions.ts";
 import { referenceSection } from "./task-references.ts";
+import { prepareHandoffDialog } from "./handoff-dialog.ts";
 
 export function taskDetailView(ctx: UiContext, task: HubTask): HTMLElement {
-	const session = ctx.state.sessions.find((item) => item.taskId === task.id);
+	const sessions = ctx.state.sessions.filter((item) => item.taskId === task.id);
+	const singleSession = sessions.length === 1 ? sessions[0] : undefined;
 	const requests = ctx.state.requests.filter((item) => item.taskId === task.id);
 	const results = ctx.state.results.filter((item) => item.taskId === task.id);
 	const page = el(
@@ -30,17 +32,9 @@ export function taskDetailView(ctx: UiContext, task: HubTask): HTMLElement {
 			el(
 				"div",
 				{ class: "task-hero__actions" },
+				button("Prepare verification handoff", "primary", () => prepareHandoffDialog(ctx, task)),
 				button("Delegate", "primary", () => delegationDialog(ctx, task)),
-				session === undefined
-					? null
-					: el(
-							"a",
-							{
-								class: "button button--secondary",
-								href: `#/session/${session.id}`,
-							},
-							"Session",
-						),
+				singleSession === undefined ? null : el("a", { class: "button button--secondary", href: `#/session/${singleSession.id}` }, "Session"),
 			),
 		),
 		el(
@@ -67,7 +61,7 @@ export function taskDetailView(ctx: UiContext, task: HubTask): HTMLElement {
 					el("h2", {}, "Questions"),
 					requests.length === 0 ? el("p", { class: "muted" }, "No formal questions yet.") : el("ul", { class: "plain-list" }, ...requests.map((request) => el("li", {}, badge(request.status, request.status === "open" ? "warning" : "success"), el("span", {}, request.prompt)))),
 				),
-				session === undefined ? el("section", { class: "detail-section detail-section--caution" }, el("h2", {}, "No session"), el("p", {}, "This task is still fully usable. A session starts only after explicit delegation or attachment.")) : sessionSummary(ctx, session.id),
+				sessions.length === 0 ? el("section", { class: "detail-section detail-section--caution" }, el("h2", {}, "No session"), el("p", {}, "This task is still fully usable. A session starts only after explicit delegation or attachment.")) : sessionChoices(ctx, task, sessions.map((item) => item.id)),
 			),
 		),
 	);
@@ -152,21 +146,32 @@ function commentSection(ctx: UiContext, task: HubTask): HTMLElement {
 	return form;
 }
 
-function sessionSummary(ctx: UiContext, sessionId: string): HTMLElement {
-	const session = ctx.state.sessions.find((item) => item.id === sessionId);
-	if (session === undefined) return el("section");
-	return el(
+function sessionChoices(ctx: UiContext, task: HubTask, sessionIds: readonly string[]): HTMLElement {
+	const section = el(
 		"section",
-		{ class: "detail-section" },
-		el("h2", {}, "Session"),
-		definitionList([
-			["Runtime", session.runtimeLabel],
-			["Control", session.controlMode],
-			["Lifecycle", session.state],
-			["Generation", String(session.bindingGeneration)],
-		]),
-		el("a", { class: "button button--secondary", href: `#/session/${session.id}` }, "Open session"),
+		{ class: "detail-section", "aria-label": "Execution attempts" },
+		el("div", { class: "section-heading" }, el("h2", {}, "Recipient sessions"), badge(String(sessionIds.length), "info")),
+		...sessionIds.map((sessionId) => {
+			const session = ctx.state.sessions.find((item) => item.id === sessionId);
+			const attempts = ctx.state.attempts.filter((item) => item.sessionId === sessionId && item.taskId === task.id);
+			return el("article", { class: "handoff-choice" },
+				el("div", { class: "cluster" }, badge(session?.state ?? "unavailable", session?.state === "open" ? "success" : "neutral"), badge(session?.controlMode ?? "unknown", session?.controlMode === "control" ? "info" : "warning")),
+				el("p", { class: "mono" }, sessionId),
+				el("a", { class: "button button--secondary", href: `#/session/${sessionId}` }, "Open session"),
+				...attempts.map((attempt) => el("div", { class: "handoff-choice__attempt", "data-attempt-id": attempt.id }, el("span", { class: "mono" }, attempt.id))),
+			);
+		}),
 	);
+	void loadTaskHandoffs(task.id).then((handoffs) => {
+		if (!section.isConnected) return;
+		for (const handoff of handoffs) {
+			const row = [...section.querySelectorAll<HTMLElement>("[data-attempt-id]")].find((item) => item.dataset["attemptId"] === handoff.attempt.id);
+			row?.append(el("a", { class: "button button--secondary", href: `#/backlog/${task.id}/handoff/${handoff.attempt.id}` }, "Open handoff"));
+		}
+	}).catch((error: unknown) => {
+		if (section.isConnected) section.append(el("p", { class: "limitation", role: "status" }, error instanceof Error ? error.message : "Handoff records are unavailable."));
+	});
+	return section;
 }
 
 function definitionList(items: readonly (readonly [string, string])[]): HTMLElement {
