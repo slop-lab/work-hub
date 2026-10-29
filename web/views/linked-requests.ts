@@ -5,7 +5,7 @@ export function linkedRequests(requests: readonly HubRequest[]): HTMLElement {
 	const open = requests.filter((request) => request.status === "open");
 	return el(
 		"section",
-		{ class: "detail-section", role: "region", "aria-label": "Linked requests" },
+		{ class: "detail-section", role: "region", "aria-label": "Linked requests", "data-lifecycle-section": "linked-requests" },
 		el("div", { class: "section-heading" }, el("h2", {}, "Linked requests"), badge(`${open.length} open`, open.some((request) => request.blocking !== "none") ? "warning" : "neutral")),
 		requests.length === 0
 			? el("p", { class: "muted" }, "No linked requests.")

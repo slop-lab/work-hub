@@ -171,7 +171,7 @@ test("Given a blocker and an interrupted handoff attempt, when it is rechecked a
 			await page.screenshot({ path: `.omo/evidence/lifecycle/handoff-shell-bottom-${width}.png` });
 			await capture(handoffLifecycle, `.omo/evidence/lifecycle/handoff-recovery-${width}.png`);
 			await capture(handoffLifecycle.getByRole("region", { name: "Attempt recovery" }), `.omo/evidence/lifecycle/handoff-recovery-form-${width}.png`);
-			await capture(handoffLifecycle.getByRole("region", { name: "Blockers" }), `.omo/evidence/lifecycle/handoff-blockers-${width}.png`);
+			await capture(page.locator('[data-lifecycle-section="blockers"]'), `.omo/evidence/lifecycle/handoff-blockers-${width}.png`);
 		}
 	} finally {
 		await app.close();
@@ -220,10 +220,11 @@ test("Given linked blocking and nonblocking questions, when task and session pag
 		await expect(page.getByRole("dialog")).toBeHidden();
 		await page.goto(`${app.url}/#/session/${session.id}`);
 		await expect(page.getByRole("region", { name: "Linked requests" })).toContainText("exact attempt");
+		await expect(page.locator(".toast")).toHaveCount(0, { timeout: 6_000 });
 		for (const width of [375, 768, 1280] as const) {
 			await page.setViewportSize({ width, height: 900 });
 			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
-			await page.getByRole("region", { name: "Linked requests" }).screenshot({ path: `.omo/evidence/lifecycle/session-questions-${width}.png` });
+			await page.locator('[data-lifecycle-section="linked-requests"]').screenshot({ path: `.omo/evidence/lifecycle/session-questions-${width}.png` });
 		}
 	} finally {
 		await app.close();

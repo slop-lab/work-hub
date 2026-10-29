@@ -21,7 +21,7 @@ export function lifecycleBlockers(ctx: UiContext, task: HubTask, lifecycle: Task
 function blockerList(ctx: UiContext, blockers: TaskLifecycle["blockers"]): HTMLElement {
 	return el(
 		"section",
-		{ class: "lifecycle-pane", "aria-label": "Blockers" },
+		{ class: "lifecycle-pane", "aria-label": "Blockers", "data-lifecycle-section": "blockers" },
 		el("div", { class: "section-heading" }, el("h3", {}, "Blockers"), badge(String(blockers.length), blockers.some((item) => item.status !== "resolved") ? "warning" : "neutral")),
 		blockers.length === 0 ? el("p", { class: "muted" }, "No lifecycle blockers recorded.") : el("div", { class: "lifecycle-rows" }, ...blockers.map((blocker) => blockerRow(ctx, blocker))),
 	);
@@ -34,7 +34,7 @@ function blockerRow(ctx: UiContext, blocker: LifecycleBlocker): HTMLElement {
 	if (blocker.status !== "resolved") {
 		const resolve = submitButton("Resolve blocker", "secondary");
 		resolve.setAttribute("aria-label", `Resolve ${blocker.id}`);
-		const form = el("form", { class: "lifecycle-blocker__form", "data-form-key": `lifecycle-resolve:${blocker.taskId}:${blocker.id}` }, resolution, resolve);
+		const form = el("form", { class: "lifecycle-blocker__form", "data-form-key": `lifecycle-resolve:${blocker.taskId}:${blocker.id}` }, label("Resolution", resolution), resolve);
 		form.addEventListener("submit", (event) => {
 			event.preventDefault();
 			if (resolution.value.trim().length === 0) { ctx.notice("Record the concrete blocker resolution.", "error"); return; }
@@ -45,7 +45,7 @@ function blockerRow(ctx: UiContext, blocker: LifecycleBlocker): HTMLElement {
 	if (blocker.status === "resolved") {
 		const recheckButton = submitButton("Recheck blocker", "secondary");
 		recheckButton.setAttribute("aria-label", `Recheck ${blocker.id}`);
-		const form = el("form", { class: "lifecycle-blocker__form", "data-form-key": `lifecycle-recheck:${blocker.taskId}:${blocker.id}` }, recheck, recheckButton);
+		const form = el("form", { class: "lifecycle-blocker__form", "data-form-key": `lifecycle-recheck:${blocker.taskId}:${blocker.id}` }, label("Recheck note", recheck), recheckButton);
 		form.addEventListener("submit", (event) => {
 			event.preventDefault();
 			if (recheck.value.trim().length === 0) { ctx.notice("Record what should be rechecked.", "error"); return; }
