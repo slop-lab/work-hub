@@ -11,7 +11,7 @@ async function capture(locator: Locator, path: string): Promise<void> {
 	}
 }
 
-test("Given a task with multiple recipient sessions, when its detail opens, then every handoff is an explicit attempt URL", async ({ page }) => {
+test("Given a verification retry, when task detail opens, then each retained handoff has its explicit attempt URL", async ({ page }) => {
 	const app = await startBrowserHub(page);
 	try {
 		const taskId = await createTask(app.hub, "browser-handoff-sessions", admin);
@@ -54,7 +54,7 @@ test("Given a task with multiple recipient sessions, when its detail opens, then
 		await expect(sessions.getByText(first.id, { exact: true })).toBeVisible();
 		await expect(sessions.getByText(secondId, { exact: true })).toBeVisible();
 		await expect(sessions.locator(`a[href="#/backlog/${taskId}/handoff/${first.id}"]`)).toBeVisible();
-		await expect(sessions.locator(`a[href="#/backlog/${taskId}/handoff/${secondId}"]`)).toHaveCount(0);
+		await expect(sessions.locator(`a[href="#/backlog/${taskId}/handoff/${secondId}"]`)).toBeVisible();
 	} finally {
 		await app.close();
 	}
@@ -139,8 +139,8 @@ test("Given a fresh preview, when handoff result and follow-up are reviewed, the
 		const detail = app.hub.getHandoff(admin, attemptId);
 		const inputDigest = detail.attempt.inputSnapshot["digest"];
 		if (typeof inputDigest !== "string") throw new TypeError("Handoff input digest missing");
-		await app.hub.execute(admin, { commandId: "browser-handoff-result", type: "result.submit", target: { kind: "attempt", id: attemptId }, payload: { submissionKey: "browser-native", outcome: "partial", inputDigest, actualCommit: "e".repeat(40), actualContextDigest: `sha256:${"f".repeat(64)}`, summary: "Native verification needs one follow-up", limitations: ["One platform remains blocked"], referenceIds: [],
-			artifacts: [{ repositoryId: initialDetail.preview.repository.id, sourceCommit: "e".repeat(40),
+		await app.hub.execute(admin, { commandId: "browser-handoff-result", type: "result.submit", target: { kind: "attempt", id: attemptId }, payload: { submissionKey: "browser-native", outcome: "partial", inputDigest, actualCommit: initialDetail.preview.verification.sourceCommit, actualContextDigest: initialDetail.preview.verification.contextDigest, summary: "Native verification needs one follow-up", limitations: ["One platform remains blocked"], referenceIds: [],
+			artifacts: [{ repositoryId: initialDetail.preview.repository.id, sourceCommit: initialDetail.preview.verification.sourceCommit,
 				path: "docs/native-validation-report.md", digest: `sha256:${"a".repeat(64)}` }],
 			evidence: [{ origin: "external_check", detail: "Native suite report retained" }] } });
 		await page.reload();
@@ -148,7 +148,7 @@ test("Given a fresh preview, when handoff result and follow-up are reviewed, the
 		await expect(result).toContainText("Native verification needs one follow-up");
 		await expect(result).toContainText("partial");
 		await expect(result).toContainText("e".repeat(40));
-		await expect(result).toContainText(`sha256:${"f".repeat(64)}`);
+		await expect(result).toContainText(initialDetail.preview.verification.contextDigest);
 		await expect(result).toContainText("docs/native-validation-report.md");
 		const handoffUrl = page.url();
 		for (const width of [375, 768, 1280] as const) {
@@ -178,16 +178,15 @@ test("Given a fresh preview, when handoff result and follow-up are reviewed, the
 		await revision.getByRole("button", { name: "Send revision" }).click();
 		await expect(revision).toBeHidden();
 
-		await result.getByRole("button", { name: "Complete task" }).click();
-		const completion = page.getByRole("dialog", { name: "Complete task" });
-		await completion.getByLabel("Completion note").fill("Human accepted the partial verification with recorded limitation");
-		await completion.getByLabel("Active execution consequence").selectOption("allow_to_continue");
+		const lifecycleDecision = page.getByRole("region", { name: "Reliable lifecycle" });
+		await lifecycleDecision.getByLabel("Acceptance decision").selectOption("accepted");
+		await lifecycleDecision.getByLabel("Decision note").fill("Human accepted the partial verification with recorded limitation");
 		for (const width of [375, 768, 1280] as const) {
 			await page.setViewportSize({ width, height: 900 });
-			await completion.screenshot({ path: `.omo/evidence/handoff/human-acceptance-${width}.png` });
+			await lifecycleDecision.screenshot({ path: `.omo/evidence/handoff/human-acceptance-${width}.png` });
 		}
-		await completion.getByRole("button", { name: "Confirm completion" }).click();
-		await expect(completion).toBeHidden();
+		await lifecycleDecision.getByRole("button", { name: "Record acceptance decision" }).click();
+		await expect(lifecycleDecision).toContainText("No lifecycle action is pending.");
 		await expect(page.getByRole("button", { name: "Reopen to backlog" })).toBeVisible();
 		expect(app.hub.getTask(admin, taskId).status).toBe("done");
 	} finally {

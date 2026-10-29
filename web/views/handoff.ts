@@ -4,6 +4,8 @@ import type { HubAttempt, HubTask } from "../state-schema.ts";
 import type { UiContext } from "../ui-context.ts";
 import { resultSection } from "./result-review.ts";
 import { taskActions } from "./task-actions.ts";
+import { lifecycleSection } from "./lifecycle-section.ts";
+import { linkedRequests } from "./linked-requests.ts";
 
 export function handoffView(ctx: UiContext, taskId: string, attemptId: string): HTMLElement {
 	const task = ctx.state.tasks.find((item) => item.id === taskId);
@@ -11,6 +13,7 @@ export function handoffView(ctx: UiContext, taskId: string, attemptId: string): 
 	if (task === undefined || attempt === undefined) return missingHandoff(taskId, attemptId);
 	const session = ctx.state.sessions.find((item) => item.id === attempt.sessionId);
 	const results = ctx.state.results.filter((item) => item.attemptId === attempt.id);
+	const requests = ctx.state.requests.filter((item) => item.taskId === task.id && (item.attemptId === undefined || item.attemptId === attempt.id));
 	const source = sourceSection(attempt);
 	const delivery = deliverySection();
 	const recipient = recipientSection(attempt, session?.runtimeLabel);
@@ -37,13 +40,14 @@ export function handoffView(ctx: UiContext, taskId: string, attemptId: string): 
 			el(
 				"div",
 				{ class: "stack stack--large" },
+				lifecycleSection(ctx, task, attempt.id),
 				source,
 				delivery,
 				activitySection(attempt),
 				resultSection(ctx, task, results),
 				taskActions(ctx, task),
 			),
-			el("aside", { class: "context-rail" }, recipient, identitySection(task, attempt)),
+			el("aside", { class: "context-rail" }, linkedRequests(requests), recipient, identitySection(task, attempt)),
 		),
 	);
 	void loadHandoff(attempt.id).then((detail) => {
