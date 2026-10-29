@@ -1,15 +1,17 @@
+import { z } from "zod";
+
 type EditableControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
 type ControlState = {
 	readonly key: string;
 	readonly value: string;
-	readonly checked?: boolean;
+	readonly checked?: boolean | undefined;
 };
 
 type FocusState = {
 	readonly key: string;
-	readonly selectionStart?: number | null;
-	readonly selectionEnd?: number | null;
+	readonly selectionStart?: number | null | undefined;
+	readonly selectionEnd?: number | null | undefined;
 };
 
 export type DirtyFormIsland = {
@@ -17,10 +19,18 @@ export type DirtyFormIsland = {
 	readonly key: string;
 	readonly dirty: boolean;
 	readonly controls: readonly ControlState[];
-	readonly focus?: FocusState;
+	readonly focus?: FocusState | undefined;
 };
 
 const drafts = new Map<string, DirtyFormIsland>();
+const storagePrefix = "workhub:draft:";
+const dirtyFormSchema = z.object({
+	identity: z.string(),
+	key: z.string(),
+	dirty: z.boolean(),
+	controls: z.array(z.object({ key: z.string(), value: z.string(), checked: z.boolean().optional() })),
+	focus: z.object({ key: z.string(), selectionStart: z.number().nullable().optional(), selectionEnd: z.number().nullable().optional() }).optional(),
+});
 
 function isEditableControl(value: Element): value is EditableControl {
 	return value instanceof HTMLInputElement || value instanceof HTMLTextAreaElement || value instanceof HTMLSelectElement;
@@ -46,6 +56,33 @@ function draftKey(identity: string, key: string): string {
 	return `${identity}\u0000${key}`;
 }
 
+function storageKey(identity: string, key: string): string {
+	return `${storagePrefix}${encodeURIComponent(identity)}:${encodeURIComponent(key)}`;
+}
+
+function storedForIdentity(identity: string): readonly DirtyFormIsland[] {
+	const prefix = `${storagePrefix}${encodeURIComponent(identity)}:`;
+	const stored: DirtyFormIsland[] = [];
+	for (let index = 0; index < sessionStorage.length; index += 1) {
+		const key = sessionStorage.key(index);
+		if (key === null || !key.startsWith(prefix)) continue;
+		const value = sessionStorage.getItem(key);
+		if (value === null) continue;
+		let decoded: unknown;
+		try {
+			decoded = JSON.parse(value);
+		} catch (error) {
+			if (error instanceof SyntaxError) { sessionStorage.removeItem(key); continue; }
+			throw error;
+		}
+		const parsed = dirtyFormSchema.safeParse(decoded);
+		if (!parsed.success) continue;
+		drafts.set(draftKey(identity, parsed.data.key), parsed.data);
+		stored.push(parsed.data);
+	}
+	return stored;
+}
+
 function snapshot(form: HTMLFormElement, identity: string): DirtyFormIsland | undefined {
 	const key = formKey(form);
 	if (key === null) return undefined;
@@ -58,7 +95,10 @@ function snapshot(form: HTMLFormElement, identity: string): DirtyFormIsland | un
 
 function remember(form: HTMLFormElement, identity: string): void {
 	const island = snapshot(form, identity);
-	if (island !== undefined) drafts.set(draftKey(identity, island.key), island);
+	if (island !== undefined) {
+		drafts.set(draftKey(identity, island.key), island);
+		sessionStorage.setItem(storageKey(identity, island.key), JSON.stringify(island));
+	}
 }
 
 export function markDirtyForm(event: Event, identity: string): void {
@@ -74,15 +114,25 @@ export function markFormClean(form: HTMLFormElement | null, identity?: string): 
 	delete form.dataset["dirty"];
 	const key = formKey(form);
 	if (key === null) return;
-	if (identity !== undefined) drafts.delete(draftKey(identity, key));
-	else for (const [storedKey, island] of drafts) if (island.key === key) drafts.delete(storedKey);
+	if (identity !== undefined) {
+		drafts.delete(draftKey(identity, key));
+		sessionStorage.removeItem(storageKey(identity, key));
+	} else for (const [storedKey, island] of drafts) if (island.key === key) {
+		drafts.delete(storedKey);
+		sessionStorage.removeItem(storageKey(island.identity, island.key));
+	}
 }
 
 export function clearDirtyForms(): void {
 	drafts.clear();
+	for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+		const key = sessionStorage.key(index);
+		if (key?.startsWith(storagePrefix) === true) sessionStorage.removeItem(key);
+	}
 }
 
 export function captureDirtyForms(root: HTMLElement, identity: string): readonly DirtyFormIsland[] {
+	storedForIdentity(identity);
 	for (const form of root.querySelectorAll<HTMLFormElement>('form[data-dirty="true"]')) remember(form, identity);
 	const retained = [...drafts.values()].filter((island) => island.identity === identity);
 	const active = document.activeElement;
@@ -93,7 +143,9 @@ export function captureDirtyForms(root: HTMLElement, identity: string): readonly
 }
 
 export function restoreDirtyForms(root: HTMLElement, identity: string, islands: readonly DirtyFormIsland[]): void {
-	for (const island of islands) {
+	const retained = new Map(storedForIdentity(identity).map((island) => [island.key, island]));
+	for (const island of islands) retained.set(island.key, island);
+	for (const island of retained.values()) {
 		if (island.identity !== identity) continue;
 		const replacement = [...root.querySelectorAll<HTMLFormElement>("form")].find((form) => formKey(form) === island.key);
 		if (replacement === undefined) continue;
