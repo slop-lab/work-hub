@@ -6,10 +6,10 @@ import type { ExecutionRepository } from "../persistence/execution-repository.ts
 import type { ResultRepository } from "../persistence/result-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
+import type { LifecycleRepository } from "../persistence/lifecycle-repository.ts";
 import { authorizeTask, requireRevision, requireRuntimeTargetScope } from "./guards.ts";
 import type { CommandOf, CommandResult } from "./types.ts";
-import { InputSnapshotSchema } from "../contracts/runtime.ts";
-import { digest } from "../persistence/codec.ts";
+import { ResultSubmissionHandler } from "./result-submission-handler.ts";
 
 export type RevisionDispatch =
   | {
@@ -37,17 +37,22 @@ export class WorkHandler {
   private readonly execution: ExecutionRepository;
   private readonly results: ResultRepository;
   private readonly state: StateRepository;
+  private readonly lifecycle: LifecycleRepository;
+  private readonly submissions: ResultSubmissionHandler;
 
-  constructor(
-    work: WorkRepository,
-    execution: ExecutionRepository,
-    results: ResultRepository,
-    state: StateRepository,
-  ) {
-    this.work = work;
-    this.execution = execution;
-    this.results = results;
-    this.state = state;
+  constructor(input: {
+    readonly work: WorkRepository;
+    readonly execution: ExecutionRepository;
+    readonly results: ResultRepository;
+    readonly state: StateRepository;
+    readonly lifecycle: LifecycleRepository;
+  }) {
+    this.work = input.work;
+    this.execution = input.execution;
+    this.results = input.results;
+    this.state = input.state;
+    this.lifecycle = input.lifecycle;
+    this.submissions = new ResultSubmissionHandler(input);
   }
 
   create(actor: Actor, command: CommandOf<"task.create">): CommandResult {
@@ -94,6 +99,27 @@ export class WorkHandler {
     if (command.payload.resultId !== undefined) {
       const result = this.results.get(actor.workspaceId, command.payload.resultId);
       if (result.taskId !== id) throw conflict('completion_result_conflict', 'Select a result belonging to this task.');
+      if (command.payload.status === "done") {
+        const latest = this.results.latestForTask(actor.workspaceId, id);
+        if (latest?.id !== result.id || task.primaryAttemptId !== result.attemptId) {
+          throw conflict("result_obsolete", "Only the current primary attempt result can complete the task.");
+        }
+        if (result.kind !== "final") throw conflict("result_not_final", "Checkpoint results cannot complete the task.");
+        const evidence = new Map(result.criterionEvidence.map((item) => [item.criterionId, item.status]));
+        const criteria = this.lifecycle.currentCriteria(actor.workspaceId, id);
+        if (criteria.some((criterion) =>
+          criterion.requirement === "required" && evidence.get(criterion.id) !== "satisfied")) {
+          throw conflict("acceptance_criteria_missing", "Required criteria lack satisfactory evidence.");
+        }
+        if (criteria.length > 0) {
+          const acceptance = this.lifecycle.view(actor.workspaceId, id).acceptance;
+          if (acceptance?.decision !== "accepted" || acceptance.resultId !== result.id) throw conflict(
+            "acceptance_required", "Tasks with explicit criteria require an accepted current result decision.");
+        }
+      }
+    } else if (command.payload.status === "done" &&
+      this.lifecycle.currentCriteria(actor.workspaceId, id).length > 0) {
+      throw conflict("acceptance_required", "Tasks with explicit criteria require an accepted current result decision.");
     }
     if (task.primaryAttemptId !== undefined) {
       const attempt = this.execution.getAttempt(actor.workspaceId, task.primaryAttemptId);
@@ -140,55 +166,7 @@ export class WorkHandler {
   }
 
   submitResult(actor: Actor, command: CommandOf<"result.submit">): CommandResult {
-    const attemptId = commandTargetId(command, "attempt");
-    const attempt = this.execution.getAttempt(actor.workspaceId, attemptId);
-    const task = this.work.getTask(actor.workspaceId, attempt.taskId);
-    authorizeTask(actor, task);
-    const session = this.execution.getSession(actor.workspaceId, attempt.sessionId);
-    requireRuntimeTargetScope(actor, session, attempt.id);
-    if (!this.work.validateSelectedReferences(actor.workspaceId, task.id, command.payload.referenceIds)) throw conflict('result_reference_invalid', 'Result references must belong to the same task and remain available.');
-    if (actor.role === 'runtime' && command.payload.evidence.some((evidence) => evidence.origin !== 'agent_claim')) throw forbidden('Bridge result statements are agent claims, not independently verified checks or human assertions.');
-    const snapshot = InputSnapshotSchema.safeParse(attempt.inputSnapshot);
-    const snapshotData = snapshot.success ? snapshot.data : undefined;
-    const verification = snapshotData?.verification;
-    const bindingFields = [command.payload.submissionKey, command.payload.inputDigest,
-      command.payload.actualCommit, command.payload.actualContextDigest];
-    if (verification !== undefined && bindingFields.some((field) => field === undefined)) {
-      throw conflict("result_binding_required", "Verification results require submission key, input digest, actual commit, and actual context digest.");
-    }
-    if (verification !== undefined && (command.payload.inputDigest !== snapshotData?.digest ||
-      command.payload.actualCommit !== verification.sourceCommit ||
-      command.payload.actualContextDigest !== verification.contextDigest)) {
-      throw conflict("result_binding_mismatch", "Result source or context does not match the immutable verification input.");
-    }
-    if (verification !== undefined && command.payload.artifacts.some((artifact) =>
-      artifact.repositoryId !== verification.repositoryId ||
-      artifact.sourceCommit !== verification.sourceCommit)) {
-      throw conflict("result_artifact_binding_mismatch",
-        "Result artifacts must identify the exact repository and source commit from the verification input.");
-    }
-    const binding = verification === undefined ? undefined : {
-      inputDigest: snapshotData?.digest, repositoryId: verification.repositoryId,
-      repositoryRevision: verification.repositoryRevision, sourceCommit: verification.sourceCommit,
-      contextDigest: verification.contextDigest, targetDigest: digest({ sessionId: session.id,
-        generation: session.bindingGeneration, profileId: attempt.profileId,
-        profileRevision: attempt.profileRevision }),
-    };
-    const submissionDigest = digest({ outcome: command.payload.outcome,
-      summary: command.payload.summary, limitations: command.payload.limitations,
-      referenceIds: command.payload.referenceIds, artifacts: command.payload.artifacts,
-      evidence: command.payload.evidence, binding });
-    const result = this.results.create({
-      workspaceId: actor.workspaceId, taskId: task.id, attemptId, authorId: actor.id,
-      summary: command.payload.summary, limitations: command.payload.limitations,
-      referenceIds: command.payload.referenceIds, evidence: command.payload.evidence,
-      artifacts: command.payload.artifacts,
-      outcome: command.payload.outcome,
-      ...(command.payload.submissionKey === undefined ? {} : { submissionKey: command.payload.submissionKey }),
-      ...(command.payload.submissionKey === undefined ? {} : { submissionDigest }),
-      ...(binding === undefined ? {} : { binding }),
-    });
-    return this.confirmed("result.persisted", "result", result.id);
+    return this.submissions.submit(actor, command);
   }
 
   reportActivity(actor: Actor, command: CommandOf<'attempt.report'>): CommandResult {
