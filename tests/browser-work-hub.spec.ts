@@ -33,7 +33,8 @@ test("Given delegated simulated work, when explicit simulator events are emitted
 		await expect(page.getByLabel("Question route")).toHaveValue("native");
 		await expect(page.getByLabel("Simulator text")).toHaveValue("Choose a release boundary");
 		await page.getByRole("button", { name: "Emit simulated event" }).click();
-		await expect(page.getByText("Choose a release boundary")).toBeVisible();
+		await expect(page.getByRole("region", { name: "Linked requests" })
+			.getByText("Choose a release boundary", { exact: true })).toBeVisible();
 		await page.getByLabel("Simulated event").selectOption("result");
 		await page.getByLabel("Simulator text").fill("Claimed simulator result");
 		await page.getByRole("button", { name: "Emit simulated event" }).click();
@@ -204,7 +205,8 @@ test("Given a stale task revision, when save is rejected, then the dirty draft r
 		await page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
 		await expect(page.getByRole("heading", { name: "Changed elsewhere" })).toBeVisible();
 		await page.getByRole("button", { name: "Save task" }).click();
-		await expect(page.getByLabel("Description")).toHaveValue("Keep this text after the conflict.");
+		await expect(page.getByRole("textbox", { name: "Description", exact: true }))
+			.toHaveValue("Keep this text after the conflict.");
 		await expect(page.getByRole("alert")).toContainText("stale");
 		expect(pageErrors).toEqual([]);
 	} finally {

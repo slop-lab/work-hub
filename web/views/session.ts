@@ -6,6 +6,7 @@ import { emptySession } from "./session-empty.ts";
 import { simulatorPanel } from "./simulator-panel.ts";
 import { sessionOutput } from "./session-output.ts";
 import { loadNativeLink } from '../integrations.ts';
+import { linkedRequests } from "./linked-requests.ts";
 
 export function sessionView(ctx: UiContext, sessionId?: string): HTMLElement {
 	const session = sessionId === undefined ? ctx.state.sessions[0] : ctx.state.sessions.find((item) => item.id === sessionId);
@@ -73,7 +74,7 @@ export function sessionView(ctx: UiContext, sessionId?: string): HTMLElement {
 			"div",
 			{ class: "session-layout" },
 			el("section", { class: "transcript-pane" }, el("header", { class: "section-heading" }, el("h2", {}, "Transcript"), el("span", { class: "muted" }, "Retained output is paginated")), sessionOutput(ctx, session, attempt), instructionComposer(ctx, session, attempt)),
-			el("aside", { class: "session-rail" }, sessionFacts(session, attempt), related, environment, sessionControls(ctx, session, attempt, binding), simulatorPanel(ctx, session)),
+			el("aside", { class: "session-rail" }, sessionFacts(session, attempt), linkedRequests(requests), related, environment, sessionControls(ctx, session, attempt, binding), simulatorPanel(ctx, session)),
 		),
 	);
 }
