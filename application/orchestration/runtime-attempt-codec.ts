@@ -12,6 +12,7 @@ import type { StateRepository } from "../persistence/state-repository.ts";
 export function runtimeInputSnapshot(input: z.infer<typeof InputSnapshotSchema>): InputSnapshot {
   return {
     id: input.id, digest: input.digest, taskId: input.taskId, taskRevision: input.taskRevision,
+    scopeRevision: input.scopeRevision,
     profileId: input.profileId, profileRevision: input.profileRevision,
     instruction: input.instruction, selectedReferenceIds: input.selectedReferenceIds,
     selectedResponseIds: input.selectedResponseIds,

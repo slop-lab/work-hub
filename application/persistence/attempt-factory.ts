@@ -74,6 +74,7 @@ export class AttemptFactory {
     }];
     const snapshotBase = {
       id: newId("snapshot"), taskId: input.task.id,
+      scopeRevision: input.task.scopeRevision,
       taskRevision: input.sourceResult === undefined && previous !== undefined
         ? previous.taskRevision : input.task.revision,
       profileId: input.profile.id,
@@ -130,6 +131,7 @@ export class AttemptFactory {
     const snapshotBase = {
       id: newId("snapshot"),
       taskId: input.task.id,
+      scopeRevision: input.task.scopeRevision,
       taskRevision: snapshotSelection ? previous.taskRevision : input.task.revision,
       profileId: input.profile.id,
       profileRevision: snapshotSelection ? previous.profileRevision : input.profile.revision,
