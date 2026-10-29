@@ -6,8 +6,10 @@ import type { HandoffRecipient, VerificationEnvelope } from "../contracts/handof
 import { conflict, forbidden } from "../domain/errors.ts";
 import type { AttemptView, ExecutionProfileView, TaskView } from "../domain/model.ts";
 import { renderVerificationPrompt } from "../domain/handoff-prompt.ts";
+import { assembleContext } from "../artifacts/snapshot-context.ts";
 import type { Clock } from "./codec.ts";
 import { digest, newId, parseJson } from "./codec.ts";
+import { AttemptDeliveryRepository } from "./attempt-delivery-repository.ts";
 
 export type ProjectRepository = {
   readonly id: string;
@@ -27,6 +29,8 @@ export type HandoffPreview = {
   readonly repository: ProjectRepository;
   readonly verification: VerificationEnvelope;
   readonly recipient: HandoffRecipient;
+  readonly selectedReferenceIds: readonly string[];
+  readonly selectedResponseIds: readonly string[];
   readonly target: Readonly<Record<string, unknown>>;
 };
 
@@ -38,15 +42,16 @@ const previewRowSchema = z.strictObject({
   taskRevision: z.number(), profileId: z.string(), profileRevision: z.number(),
   repositoryId: z.string(), repositoryRevision: z.number(), verificationJson: z.string(),
   recipientJson: z.string(), targetJson: z.string(), attemptId: z.string().nullable(),
+  selectedReferenceIdsJson: z.string(), selectedResponseIdsJson: z.string(),
 });
 
 export class HandoffRepository {
   private readonly database: DatabaseSync;
   private readonly clock: Clock;
+  private readonly deliveries: AttemptDeliveryRepository;
 
   constructor(database: DatabaseSync, clock: Clock) {
-    this.database = database;
-    this.clock = clock;
+    this.database = database; this.clock = clock; this.deliveries = new AttemptDeliveryRepository(database, clock);
   }
 
   register(input: {
@@ -55,6 +60,15 @@ export class HandoffRepository {
     readonly canonicalIdentity: string;
   }): ProjectRepository {
     const canonicalIdentity = input.canonicalIdentity.trim();
+    if (canonicalIdentity.includes("?")) {
+      throw forbidden("Repository identity must not contain credential-bearing query material.");
+    }
+    if (canonicalIdentity.includes("://")) {
+      const url = new URL(canonicalIdentity);
+      if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0) {
+        throw forbidden("Repository identity must not contain embedded credentials or query material.");
+      }
+    }
     const existing = this.database.prepare(`SELECT id,project_id AS projectId,
       canonical_identity AS canonicalIdentity,revision FROM project_repositories
       WHERE workspace_id=? AND project_id=? AND canonical_identity=?`)
@@ -87,6 +101,8 @@ export class HandoffRepository {
     readonly repositoryRevision: number;
     readonly verification: VerificationEnvelope;
     readonly recipient: HandoffRecipient;
+    readonly selectedReferenceIds: readonly string[];
+    readonly selectedResponseIds: readonly string[];
     readonly target: Readonly<Record<string, unknown>>;
   }): HandoffPreview {
     const repository = this.getRepository(input.workspaceId, input.repositoryId);
@@ -101,16 +117,21 @@ export class HandoffRepository {
       taskId: input.task.id, taskRevision: input.task.revision,
       profileId: input.profile.id, profileRevision: input.profile.revision,
       repository, verification: input.verification, recipient: input.recipient, target: input.target,
+      selectedReferenceIds: input.selectedReferenceIds,
+      selectedResponseIds: input.selectedResponseIds,
       promptDigest: rendered.promptDigest,
     };
     const previewDigest = digest(previewBase);
     this.database.prepare(`INSERT OR IGNORE INTO handoff_previews
       (preview_digest,workspace_id,task_id,task_revision,profile_id,profile_revision,
-       repository_id,repository_revision,verification_json,recipient_json,target_json,prompt,prompt_digest,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        repository_id,repository_revision,verification_json,recipient_json,
+        selected_reference_ids_json,selected_response_ids_json,target_json,prompt,prompt_digest,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       previewDigest, input.workspaceId, input.task.id, input.task.revision,
       input.profile.id, input.profile.revision, repository.id, repository.revision,
-      JSON.stringify(input.verification), JSON.stringify(input.recipient), JSON.stringify(input.target), rendered.prompt,
+      JSON.stringify(input.verification), JSON.stringify(input.recipient),
+      JSON.stringify(input.selectedReferenceIds), JSON.stringify(input.selectedResponseIds),
+      JSON.stringify(input.target), rendered.prompt,
       rendered.promptDigest, this.clock.now().toISOString(),
     );
     return { previewDigest, ...rendered, ...previewBase };
@@ -123,6 +144,8 @@ export class HandoffRepository {
     readonly previewDigest: string;
     readonly verification: VerificationEnvelope;
     readonly recipient: HandoffRecipient;
+    readonly selectedReferenceIds: readonly string[];
+    readonly selectedResponseIds: readonly string[];
   }): HandoffPreview {
     const preview = this.getPreview(input.workspaceId, input.previewDigest);
     const matches = preview.taskId === input.task.id && preview.taskRevision === input.task.revision &&
@@ -130,6 +153,10 @@ export class HandoffRepository {
       digest(preview.verification) === digest(input.verification) &&
       digest(preview.recipient) === digest(input.recipient);
     if (!matches) throw conflict("handoff_preview_stale", "Preview source, context, profile, task, or recipient changed.");
+    if (digest(preview.selectedReferenceIds) !== digest(input.selectedReferenceIds) ||
+      digest(preview.selectedResponseIds) !== digest(input.selectedResponseIds)) {
+      throw conflict("handoff_selection_mismatch", "Delegation selections must exactly match the preview.");
+    }
     return preview;
   }
 
@@ -159,7 +186,9 @@ export class HandoffRepository {
       prompt_digest AS promptDigest,prompt,task_id AS taskId,task_revision AS taskRevision,
       profile_id AS profileId,profile_revision AS profileRevision,repository_id AS repositoryId,
       repository_revision AS repositoryRevision,verification_json AS verificationJson,
-      recipient_json AS recipientJson,target_json AS targetJson,attempt_id AS attemptId FROM handoff_previews
+      recipient_json AS recipientJson,selected_reference_ids_json AS selectedReferenceIdsJson,
+      selected_response_ids_json AS selectedResponseIdsJson,target_json AS targetJson,
+      attempt_id AS attemptId FROM handoff_previews
       WHERE workspace_id=? AND preview_digest=?`).get(workspaceId, previewDigest));
     return {
       previewDigest: row.previewDigest, promptDigest: row.promptDigest, prompt: row.prompt,
@@ -167,52 +196,70 @@ export class HandoffRepository {
       profileRevision: row.profileRevision, repository: this.getRepository(workspaceId, row.repositoryId),
       verification: VerificationEnvelopeSchema.parse(parseJson(row.verificationJson)),
       recipient: HandoffRecipientSchema.parse(parseJson(row.recipientJson)),
+      selectedReferenceIds: z.array(z.string()).parse(parseJson(row.selectedReferenceIdsJson)),
+      selectedResponseIds: z.array(z.string()).parse(parseJson(row.selectedResponseIdsJson)),
       target: z.record(z.string(), z.unknown()).parse(parseJson(row.targetJson)),
     };
+  }
+  contextDigest(input: { readonly workspaceId: string; readonly taskId: string;
+    readonly selectedReferenceIds: readonly string[]; readonly selectedResponseIds: readonly string[] }): string {
+    return digest(assembleContext(this.database, input));
   }
 
   previewForAttempt(workspaceId: string, attemptId: string): HandoffPreview | undefined {
     const row = z.object({ previewDigest: z.string() }).optional().parse(this.database.prepare(
-      `SELECT preview_digest AS previewDigest FROM handoff_previews WHERE workspace_id=? AND attempt_id=?`,
-    ).get(workspaceId, attemptId));
+      `SELECT preview_digest AS previewDigest FROM handoff_previews WHERE workspace_id=? AND attempt_id=?
+       UNION ALL SELECT preview_digest AS previewDigest FROM handoff_attempt_lineage
+       WHERE workspace_id=? AND attempt_id=? LIMIT 1`,
+    ).get(workspaceId, attemptId, workspaceId, attemptId));
     return row === undefined ? undefined : this.getPreview(workspaceId, row.previewDigest);
   }
 
+  preserveLineage(input: { readonly workspaceId: string; readonly sourceAttempt: AttemptView;
+    readonly attempt: AttemptView; readonly task: TaskView }): void {
+    const preview = this.previewForAttempt(input.workspaceId, input.sourceAttempt.id);
+    if (preview === undefined) return;
+    const sourceScopeRevision = z.object({ scopeRevision: z.number().default(0) })
+      .passthrough().parse(input.sourceAttempt.inputSnapshot).scopeRevision;
+    if (sourceScopeRevision !== input.task.scopeRevision) {
+      throw conflict("handoff_fresh_preview_required",
+        "Task scope changed after the source handoff; create a fresh preview before continuing.");
+    }
+    const snapshot = z.record(z.string(), z.unknown()).parse(input.attempt.inputSnapshot);
+    const base: Record<string, unknown> = { ...snapshot, verification: preview.verification,
+      promptDigest: preview.promptDigest };
+    delete base["digest"];
+    const complete = { ...base, digest: digest(base) };
+    const now = this.clock.now().toISOString();
+    this.database.prepare(`UPDATE attempts SET input_snapshot_json=?,updated_at=?
+      WHERE workspace_id=? AND id=?`).run(JSON.stringify(complete), now,
+      input.workspaceId, input.attempt.id);
+    this.database.prepare(`INSERT INTO handoff_attempt_lineage
+      (attempt_id,workspace_id,source_attempt_id,preview_digest,created_at)
+      VALUES (?,?,?,?,?)`).run(input.attempt.id, input.workspaceId, input.sourceAttempt.id,
+      preview.previewDigest, now);
+    const deliveryDigest = digest({ attemptId: input.attempt.id, inputDigest: complete.digest,
+      previewDigest: preview.previewDigest, sourceAttemptId: input.sourceAttempt.id });
+    this.database.prepare(`INSERT INTO attempt_deliveries
+      (attempt_id,workspace_id,delivery_digest,status,created_at,updated_at)
+      VALUES (?,?,?,'pending',?,?)`).run(input.attempt.id, input.workspaceId,
+      deliveryDigest, now, now);
+  }
+
   delivery(workspaceId: string, attemptId: string): Readonly<Record<string, unknown>> {
-    return z.record(z.string(), z.unknown()).parse(this.database.prepare(`SELECT attempt_id AS attemptId,
-      delivery_digest AS deliveryDigest,status,input_receipt_json AS inputReceiptJson,
-      last_error_json AS lastErrorJson,updated_at AS updatedAt FROM attempt_deliveries
-      WHERE workspace_id=? AND attempt_id=?`).get(workspaceId, attemptId));
+    return this.deliveries.get(workspaceId, attemptId);
   }
   deliveryOptional(workspaceId: string, attemptId: string): Readonly<Record<string, unknown>> | undefined {
-    const row = this.database.prepare(`SELECT attempt_id AS attemptId,delivery_digest AS deliveryDigest,
-      status,input_receipt_json AS inputReceiptJson,last_error_json AS lastErrorJson,
-      updated_at AS updatedAt FROM attempt_deliveries WHERE workspace_id=? AND attempt_id=?`)
-      .get(workspaceId, attemptId);
-    return row === undefined ? undefined : z.record(z.string(), z.unknown()).parse(row);
+    return this.deliveries.optional(workspaceId, attemptId);
   }
   acknowledge(workspaceId: string, attemptId: string, deliveryDigest: string): void {
-    const delivery = this.delivery(workspaceId, attemptId);
-    if (delivery["deliveryDigest"] !== deliveryDigest) {
-      throw conflict("delivery_digest_mismatch", "Acknowledgment does not match the assigned delivery.");
-    }
-    const changed = this.database.prepare(`UPDATE attempt_deliveries SET status='acknowledged',updated_at=?
-      WHERE workspace_id=? AND attempt_id=? AND status IN ('pending','delivered','unknown')`)
-      .run(this.clock.now().toISOString(), workspaceId, attemptId).changes;
-    if (changed !== 1 && delivery["status"] !== "acknowledged") {
-      throw conflict("delivery_not_acknowledgeable", "Delivery is not awaiting acknowledgment.");
-    }
+    this.deliveries.acknowledge(workspaceId, attemptId, deliveryDigest);
   }
   recordDelivery(workspaceId: string, attemptId: string, input: {
     readonly status: "delivered" | "failed" | "unknown";
     readonly receipt?: object;
     readonly error?: object;
   }): void {
-    const now = this.clock.now().toISOString();
-    this.database.prepare(`UPDATE attempt_deliveries SET status=?,input_receipt_json=?,
-      last_error_json=?,updated_at=? WHERE workspace_id=? AND attempt_id=?`).run(
-      input.status, input.receipt === undefined ? null : JSON.stringify(input.receipt),
-      input.error === undefined ? null : JSON.stringify(input.error), now, workspaceId, attemptId,
-    );
+    this.deliveries.record(workspaceId, attemptId, input);
   }
 }

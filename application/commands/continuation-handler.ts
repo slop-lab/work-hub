@@ -10,6 +10,8 @@ import type { ObservationRepository } from "../persistence/observation-repositor
 import type { ResultRepository } from "../persistence/result-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
+import type { HandoffRepository } from "../persistence/handoff-repository.ts";
+import type { LifecycleRepository } from "../persistence/lifecycle-repository.ts";
 import { authorizeSessionControl, authorizeTask, requireRevision } from "./guards.ts";
 import type { CommandOf, CommandResult } from "./types.ts";
 import { ContinuationPolicy } from "./continuation-policy.ts";
@@ -24,6 +26,8 @@ type ContinuationDependencies = {
   readonly results: ResultRepository;
   readonly observation: ObservationRepository;
   readonly state: StateRepository;
+  readonly handoffs: HandoffRepository;
+  readonly lifecycle: LifecycleRepository;
   readonly installationUsable: (
     workspaceId: string, kind: "execution" | "agent_runtime", installationId: string,
   ) => boolean;
@@ -81,6 +85,9 @@ export class ContinuationHandler {
       context: command.payload.context,
       ...(sourceResult === undefined ? {} : { sourceResult }),
     });
+    const continued = this.dependencies.execution.getAttempt(actor.workspaceId, attemptId);
+    this.dependencies.handoffs.preserveLineage({ workspaceId: actor.workspaceId,
+      sourceAttempt: predecessor, attempt: continued, task });
     const operationId = this.schedule(actor, command.commandId, session.runtimeInstallationId, {
       sessionId,
       attemptId,
@@ -120,7 +127,7 @@ export class ContinuationHandler {
       if (session.activeAttemptId !== predecessor.id) {
         throw conflict("retry_target_obsolete", "The retry predecessor is no longer the session's current attempt.");
       }
-      return this.continue(actor, {
+      const continued = this.continue(actor, {
         commandId: command.commandId,
         type: "session.continue",
         target: { kind: "session", id: session.id },
@@ -132,6 +139,12 @@ export class ContinuationHandler {
           instruction,
         },
       });
+      const attemptId = continued.objectRefs[0]?.id;
+      if (attemptId === undefined) throw new TypeError("Continuation did not return its attempt identity.");
+      this.dependencies.lifecycle.recordRetry({ workspaceId: actor.workspaceId, attemptId,
+        predecessorOrdinal: predecessor.retryOrdinal, limit: command.payload.retryLimit,
+        reason: command.payload.reason });
+      return continued;
     }
     const selectedEnvironment = command.payload.environment ?? profile.defaultEnvironment;
     const selectedMode = Reflect.get(selectedEnvironment, "mode");
@@ -166,6 +179,11 @@ export class ContinuationHandler {
       predecessor,
       context: command.payload.input,
     });
+    this.dependencies.handoffs.preserveLineage({ workspaceId: actor.workspaceId,
+      sourceAttempt: predecessor, attempt: created.attempt, task });
+    this.dependencies.lifecycle.recordRetry({ workspaceId: actor.workspaceId,
+      attemptId: created.attempt.id, predecessorOrdinal: predecessor.retryOrdinal,
+      limit: command.payload.retryLimit, reason: command.payload.reason });
     const retryEnvironment = prepareRetryEnvironment({ actor, task, profile,
       ...(command.payload.environment === undefined ? {} : { requested: command.payload.environment }),
       ...(command.expected?.registration === undefined ? {} : {
