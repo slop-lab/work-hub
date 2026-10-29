@@ -32,6 +32,7 @@ test('actual OpenCode question, answer, result and restart continuity', { skip: 
       bindingGeneration: 1, controlGrantRef: opened.result.controlGrant.id };
     const start = await connector.startAttempt(context('start'), { target, workAreas: [], input: {
       id: 'snapshot', digest: digest('input'), taskId: 'task-live', taskRevision: 1, profileId: 'live-profile', profileRevision: 1,
+      scopeRevision: 1,
       instruction: 'Disposable connector acceptance only. Use the native question tool to ask exactly one free-text question: Which acceptance marker? Wait for its answer, then return a short receipt that identifies the answer. Do not delegate, use other tools, run shell commands or change files.',
       selectedReferenceIds: [], selectedResponseIds: [], contextItems: [], authorizedEffectKinds: [], assembledAt: new Date().toISOString(),
     } });

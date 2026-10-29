@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { OpenCodeRuntimeConnector } from '../application/connectors/opencode/runtime.ts';
+import { renderPrompt } from '../application/prompts/index.ts';
 import { digest } from '../application/persistence/codec.ts';
 import { context, openCodeFixture } from './opencode-fixture.ts';
 
@@ -98,6 +99,11 @@ test('native question response reaches only its bound question endpoint', async 
       nativeRequestRef: request.nativeRequestRef, validity: request.draft.validity, answer: { kind: 'text', text: 'chosen' } });
     assert.equal(receipt.status, 'confirmed');
     assert.deepEqual(fixture.calls.find((call) => call.path.endsWith('/reply'))?.body, { answers: [['chosen']] });
+    const replay = await fixture.connector.deliverResponse(context('answer'), { target: fixture.target,
+      requestId: 'request', requestRevision: 1, responseId: 'response', responseDigest: 'sha256:123',
+      nativeRequestRef: request.nativeRequestRef, validity: request.draft.validity, answer: { kind: 'text', text: 'chosen' } });
+    assert.equal(replay.status, 'confirmed');
+    assert.equal(fixture.calls.filter((call) => call.path.endsWith('/reply')).length, 1);
   } finally { await fixture.close(); }
 });
 
@@ -150,14 +156,48 @@ test('verification handoff sends the canonical rendered instruction rather than 
   const fixture = await openCodeFixture();
   try {
     await fixture.open();
-    const instruction = 'Canonical verification handoff prompt';
+    const rendered = renderPrompt('verifier_handoff', {
+      task: { id: 'task', revision: 1, scopeRevision: 1, title: 'Sanitized verification', description: 'Use fixture evidence.' },
+      repository: { id: 'repository', projectId: 'project-default', canonicalIdentity: 'repo:fixture', revision: 1 },
+      verification: { repositoryId: 'repository', repositoryRevision: 1, sourceBranch: 'work/fixture',
+        sourceCommit: 'a'.repeat(40), requestedValidation: 'Run disposable fixture checks.',
+        contextDigest: `sha256:${'b'.repeat(64)}` },
+    });
     const receipt = await fixture.connector.startAttempt(context('start'), { ...fixture.input,
-      input: { ...fixture.input.input, instruction, promptDigest: digest(instruction) } });
+      input: { ...fixture.input.input, instruction: rendered.text, promptDigest: rendered.digest } });
     const prompt = fixture.calls.find((call) => call.path.endsWith('/prompt_async'))?.body;
     assert.equal(receipt.status, 'confirmed');
     assert.deepEqual(prompt, { messageID: receipt.status === 'confirmed' ? receipt.result.nativeInputRef?.id : undefined,
       agent: fixture.input.target.nativeSession.id === 'ses_fixture' ? 'fixture-agent' : '',
-      model: { providerID: 'fixture-provider', modelID: 'fixture-model' }, parts: [{ type: 'text', text: instruction }] });
+      model: { providerID: 'fixture-provider', modelID: 'fixture-model' }, parts: [{ type: 'text', text: rendered.text }] });
+  } finally { await fixture.close(); }
+});
+
+test('answer continuation is delivered exactly once with accepted answer and pending criteria', async () => {
+  const fixture = await openCodeFixture();
+  try {
+    await fixture.open();
+    await fixture.connector.startAttempt(context('start'), fixture.input);
+    const rendered = renderPrompt('answer_continuation', {
+      taskId: 'task', attemptId: 'attempt', requestId: 'request',
+      acceptedAnswer: { kind: 'text', text: 'Use the disposable fixture.' },
+      scopeRevision: 1, completedWork: ['Initial analysis retained.'],
+      pendingCriteria: [{ id: 'criterion-2', taskId: 'task', amendmentId: 'amendment-1', key: 'native-verification',
+        description: 'Native verification passes', requirement: 'required', verification: 'required',
+        createdAt: new Date(0).toISOString() }],
+    });
+    const continuation = { target: fixture.target, text: rendered.text, referenceIds: [], mode: 'runtime_queued' as const };
+
+    const first = await fixture.connector.sendInstruction(context('continue'), continuation);
+    const replay = await fixture.connector.sendInstruction(context('continue'), continuation);
+
+    assert.equal(first.status, 'confirmed');
+    assert.equal(replay.status, 'confirmed');
+    const prompts = fixture.calls.filter((call) => call.path.endsWith('/prompt_async'));
+    assert.equal(prompts.length, 2);
+    assert.deepEqual(prompts[1]?.body, { messageID: first.status === 'confirmed' ? first.result.nativeInputRef?.id : undefined,
+      agent: 'fixture-agent', model: { providerID: 'fixture-provider', modelID: 'fixture-model' },
+      parts: [{ type: 'text', text: rendered.text }] });
   } finally { await fixture.close(); }
 });
 

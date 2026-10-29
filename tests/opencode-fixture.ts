@@ -75,7 +75,7 @@ export async function openCodeFixture(options: { readonly recipient?: { readonly
   const target = { hubSessionId: 'logical', hubAttemptId: 'attempt', bindingGeneration: 1,
     controlGrantRef: 'opencode:logical', nativeSession: connector.state.reference('agent-session', 'ses_fixture') };
   const input: AttemptStart = { target, workAreas: [], input: { id: 'snapshot', digest: digest('snapshot'), taskId: 'task',
-    taskRevision: 1, profileId: 'profile', profileRevision: 1, instruction: 'Fixture work', selectedReferenceIds: [],
+    taskRevision: 1, scopeRevision: 1, profileId: 'profile', profileRevision: 1, instruction: 'Fixture work', selectedReferenceIds: [],
     selectedResponseIds: [], contextItems: [], authorizedEffectKinds: [], assembledAt: new Date(0).toISOString() } };
   return { connector, ledger, connection, messages, childMessages, calls, state, open, target, input,
     close: async () => { ledger.close(); server.close(); await once(server, 'close'); } };

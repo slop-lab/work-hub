@@ -95,24 +95,24 @@ export class OpenCodeRuntimeConnector implements AgentRuntimeConnector {
       input.nativeRequestRef.providerScope !== this.client.connection.directory || input.nativeRequestRef.kind !== 'question') {
       throw new HubError({ code: 'opencode_question_scope', category: 'identity_mismatch', message: 'The question is outside this attempt binding.', retry: 'never' });
     }
-    const question = (await this.client.questions(ctx, binding.nativeId)).find((item) => item.id === input.nativeRequestRef.id);
-    const item = question?.questions[0];
-    if (!question || question.questions.length !== 1 || !item || item.multiple || input.validity.kind !== 'attempt' ||
-      input.validity.nativeRequestRevision !== digest(question)) throw new HubError({ code: 'opencode_question_changed',
-      category: 'conflict', message: 'The native question is no longer current or has an unsupported shape. Inspect it natively.', retry: 'manual_action' });
-    let answer: string;
-    switch (input.answer.kind) {
-      case 'text': answer = input.answer.text; break;
-      case 'single_choice': {
-        const option = item.options[Number(input.answer.optionId)];
-        if (!option) throw new HubError({ code: 'opencode_option_missing', category: 'validation', message: 'Selected option is unavailable.', retry: 'never' });
-        answer = option.label; break;
-      }
-      case 'approval': throw new HubError({ code: 'opencode_approval_unsupported', category: 'unsupported',
-        message: 'Native permission approvals are not mapped. Use the authenticated OpenCode view.', retry: 'never' });
-    }
     return this.state.ledger.execute(ctx, { kind: 'runtime.deliverResponse', schemaId: 'workhub.runtime.response-receipt.v1',
       schema: ResponseDeliveryResultSchema, input, effect: 'response.acknowledged' }, async () => {
+      const question = (await this.client.questions(ctx, binding.nativeId)).find((item) => item.id === input.nativeRequestRef.id);
+      const item = question?.questions[0];
+      if (!question || question.questions.length !== 1 || !item || item.multiple || input.validity.kind !== 'attempt' ||
+        input.validity.nativeRequestRevision !== digest(question)) throw new HubError({ code: 'opencode_question_changed',
+        category: 'conflict', message: 'The native question is no longer current or has an unsupported shape. Inspect it natively.', retry: 'manual_action' });
+      let answer: string;
+      switch (input.answer.kind) {
+        case 'text': answer = input.answer.text; break;
+        case 'single_choice': {
+          const option = item.options[Number(input.answer.optionId)];
+          if (!option) throw new HubError({ code: 'opencode_option_missing', category: 'validation', message: 'Selected option is unavailable.', retry: 'never' });
+          answer = option.label; break;
+        }
+        case 'approval': throw new HubError({ code: 'opencode_approval_unsupported', category: 'unsupported',
+          message: 'Native permission approvals are not mapped. Use the authenticated OpenCode view.', retry: 'never' });
+      }
       z.literal(true).parse(await this.client.request(ctx, `/question/${encodeURIComponent(question.id)}/reply`, { answers: [[answer]] }));
       return { responseId: input.responseId, receiptRef: this.state.reference('question-response', question.id) };
     });
