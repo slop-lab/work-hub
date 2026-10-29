@@ -111,6 +111,9 @@ test('sanitized premature-done result uses a distinct incomplete-fix template', 
     verification: { repositoryId: 'repo-1', repositoryRevision: 1, sourceBranch: 'work/fixture',
       sourceCommit: 'a'.repeat(40), requestedValidation: 'Run the fixture checks.',
       contextDigest: `sha256:${'b'.repeat(64)}` },
+    amendments,
+    criteria,
+    context: [],
   });
   const incomplete = renderPrompt('fix_incomplete', {
     attemptId: 'attempt-1', acceptance: { id: 'acceptance-1', taskId: 'task-1', resultId: 'result-1',
@@ -120,6 +123,9 @@ test('sanitized premature-done result uses a distinct incomplete-fix template', 
   });
 
   assert.equal(verifier.templateId, 'verifier_handoff');
+  const verifierInput = PromptEnvelopeSchema.parse(JSON.parse(verifier.text)).input;
+  assert.deepEqual(verifierInput['amendments'], amendments);
+  assert.deepEqual(verifierInput['criteria'], criteria);
   assert.equal(incomplete.templateId, 'fix_incomplete');
   assert.deepEqual(PromptEnvelopeSchema.parse(JSON.parse(incomplete.text)).input['acceptance'], {
     actorId: 'user-1', createdAt: new Date(0).toISOString(), decision: 'incomplete', id: 'acceptance-1',

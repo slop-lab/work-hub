@@ -162,6 +162,7 @@ test('verification handoff sends the canonical rendered instruction rather than 
       verification: { repositoryId: 'repository', repositoryRevision: 1, sourceBranch: 'work/fixture',
         sourceCommit: 'a'.repeat(40), requestedValidation: 'Run disposable fixture checks.',
         contextDigest: `sha256:${'b'.repeat(64)}` },
+      amendments: [], criteria: [], context: [],
     });
     const receipt = await fixture.connector.startAttempt(context('start'), { ...fixture.input,
       input: { ...fixture.input.input, instruction: rendered.text, promptDigest: rendered.digest } });

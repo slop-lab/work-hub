@@ -17,6 +17,9 @@ test("canonical prompt renderer reassembles the same preview digest", () => {
     task: { id: "task-1", revision: 7, scopeRevision: 2, title: "Verify release", description: "Run native checks." },
     repository: { id: "repo-1", projectId: "project-default", canonicalIdentity: "https://example.invalid/org/repo.git", revision: 3 },
     verification: { repositoryId: "repo-1", repositoryRevision: 3, sourceBranch: "work/verify", sourceCommit, requestedValidation: "Ubuntu native verification", contextDigest },
+    amendments: [],
+    criteria: [],
+    context: [],
   } as const;
 
   // When

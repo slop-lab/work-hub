@@ -91,6 +91,9 @@ export type VerifierHandoffInput = {
     readonly revision: number;
   };
   readonly verification: VerificationEnvelope;
+  readonly amendments: readonly TaskAmendmentView[];
+  readonly criteria: readonly TaskCriterionView[];
+  readonly context: TaskBriefInput['context'];
 };
 
 export type FixIncompleteInput = {
