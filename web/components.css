@@ -390,6 +390,8 @@
 	margin: 0;
 	padding: var(--space-3);
 	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 	border: 1px solid var(--color-border);
 	border-radius: var(--radius-control);
 	background: var(--color-canvas);
@@ -407,7 +409,7 @@
 	grid-column: auto;
 }
 .result-summary {
-	font-size: 1.05rem;
+	font-size: var(--text-h3);
 	font-weight: 600;
 }
 .history-list {
@@ -558,11 +560,25 @@
 	justify-content: space-between;
 	gap: var(--space-3);
 }
+.modal__head {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+.modal__head .button--quiet {
+	min-block-size: 2.75rem;
+}
+.modal > *,
+.modal > form > * {
+	min-inline-size: 0;
+}
 .modal__actions {
 	justify-content: end;
 	margin-block-start: var(--space-5);
 	padding-block-start: var(--space-3);
 	background: var(--color-surface);
+}
+.modal__actions .button {
+	min-block-size: 2.75rem;
 }
 .modal > form {
 	min-block-size: 0;
@@ -736,5 +752,19 @@
 	}
 	.handoff-choice__attempt {
 		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (max-width: 30rem) {
+	.modal {
+		inline-size: calc(100% - 1rem);
+		padding: var(--space-3);
+	}
+	.modal__actions {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.modal__actions > * {
+		inline-size: 100%;
 	}
 }

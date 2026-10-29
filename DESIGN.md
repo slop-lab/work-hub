@@ -34,9 +34,9 @@ Primary personas:
 | Surface strong | `--color-surface-strong` | `#dce2e8` | Selected and pressed regions |
 | Ink | `--color-ink` | `#17202a` | Primary text |
 | Ink muted | `--color-ink-muted` | `#53606d` | Secondary text |
-| Ink quiet | `--color-ink-quiet` | `#74808c` | Metadata and placeholders |
+| Ink quiet | `--color-ink-quiet` | `#65717d` | Metadata and placeholders |
 | Border | `--color-border` | `#cdd5dd` | Standard separation |
-| Border strong | `--color-border-strong` | `#aeb9c4` | Controls and emphasized separation |
+| Border strong | `--color-border-strong` | `#74808c` | Controls and emphasized separation |
 | Accent | `--color-accent` | `#b43b24` | Primary action, active navigation, links |
 | Accent hover | `--color-accent-hover` | `#8f2e1c` | Hover/pressed action |
 | Accent soft | `--color-accent-soft` | `#f7ddd6` | Selected/action context |
