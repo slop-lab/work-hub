@@ -18,6 +18,8 @@ import { simulatorRoutes } from './simulator.ts';
 import { eventRoutes } from './events.ts';
 import type { ConfiguredConnections } from '../connectors/configured.ts';
 import { externalContextRoutes } from './external-context.ts';
+import { handoffRoutes } from "./handoffs.ts";
+import { recipientExchangeRoutes } from "./recipient-exchange.ts";
 
 export type ApplicationOptions = {
   readonly hub: Hub;
@@ -34,6 +36,7 @@ export function createApplication(options: ApplicationOptions) {
   app.use('*', bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: { code: 'body_too_large', message: 'Command body exceeds 512 KiB.' } }, 413) }));
   app.get('/health', (c) => c.json({ status: 'ok', contractMajor: 1, simulation: hub.readiness.simulated, liveReady: false }));
   app.route('/api/v1', loginRoutes({ ...options, isUserEnabled: (id) => hub.actorForUser(id) !== undefined }));
+  app.route('/api/v1', recipientExchangeRoutes({ hub, auth }));
   app.use('/api/*', authenticate({ auth, origin: options.origin }));
   const actor = (c: Context<ApiEnvironment>): Actor => {
     const identity = c.get('identity');
@@ -95,6 +98,7 @@ export function createApplication(options: ApplicationOptions) {
     return receipt ? c.json(receipt) : c.json({ error: { code: 'not_found' } }, 404);
   });
   app.route('/api/v1', queryRoutes({ hub, actor }));
+  app.route('/api/v1', handoffRoutes({ hub, actor }));
   app.route('/api/v1/bridge', bridgeRoutes(hub));
   app.route('/api/v1/simulator', simulatorRoutes({ hub, actor }));
   app.route('/api/v1', eventRoutes({ hub, actor }));
