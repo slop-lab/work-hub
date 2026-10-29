@@ -31,7 +31,6 @@ export function resultSection(ctx: UiContext, task: HubTask, results: UiContext[
 		}
 		const actions = el("div", { class: "cluster", role: "group", "aria-label": "Result actions" }, revise);
 		if (retryTarget.kind === "available") actions.append(button("Retry in new session", "secondary", () => retryDialog(ctx, task, retryTarget)));
-		actions.append(button("Complete task", "primary", () => completionDialog(ctx, task, result)));
 		section.append(
 			el(
 				"article",
@@ -187,40 +186,6 @@ function revisionDialog(ctx: UiContext, task: HubTask, result: HubResult, target
 	});
 }
 
-function completionDialog(ctx: UiContext, task: HubTask, result: HubResult): void {
-	const note = el("textarea", { class: "textarea", name: "completionNote", rows: "4" });
-	const primaryAttempt = ctx.state.attempts.find((item) => item.id === task.primaryAttemptId);
-	const hasActiveWork = primaryAttempt !== undefined && primaryAttempt.phase !== "finished";
-	const form = el("form", { class: "stack" }, el("p", {}, "Completing the task records the human business decision. Runtime execution is a separate effect."), label("Completion note", note));
-	let consequence: HTMLSelectElement | undefined;
-	if (hasActiveWork) {
-		consequence = el("select", { class: "select", name: "activeExecutionDecision", required: true }, el("option", { value: "" }, "Choose what happens to active execution"), el("option", { value: "request_stop" }, "Request stop separately"), el("option", { value: "allow_to_continue" }, "Allow execution to continue"));
-		form.append(label("Active execution consequence", consequence, "This choice does not close the session or release its environment."));
-	}
-	const confirm = button("Confirm completion", "primary");
-	const dialog = openDialog("Complete task", form, [button("Cancel", "secondary", () => dialog.close()), confirm]);
-	confirm.addEventListener("click", () => {
-		const selectedConsequence = consequence === undefined ? undefined : executionDecision(consequence.value);
-		if (hasActiveWork && selectedConsequence === undefined) {
-			ctx.notice("Choose what should happen to active execution before completing the task.", "error");
-			return;
-		}
-		confirm.disabled = true;
-		dialog.setAttribute("aria-busy", "true");
-		void ctx.command({ commandId: commandId(), type: "task.setStatus", target: { kind: "task", id: task.id }, expected: { task: task.revision }, payload: { status: "done", resultId: result.id, completionNote: findFormValue(form, "completionNote") || undefined, ...(selectedConsequence === undefined ? {} : { activeExecutionDecision: selectedConsequence }) } }, "Task completed. Runtime and environment state follow the explicit execution choice.").then((saved) => {
-			if (saved) dialog.close();
-			else {
-				confirm.disabled = false;
-				dialog.removeAttribute("aria-busy");
-			}
-		});
-	});
-}
-
 function instructionMode(value: string): "immediate" | "runtime_queued" | undefined {
 	return value === "immediate" || value === "runtime_queued" ? value : undefined;
-}
-
-function executionDecision(value: string): "request_stop" | "allow_to_continue" | undefined {
-	return value === "request_stop" || value === "allow_to_continue" ? value : undefined;
 }

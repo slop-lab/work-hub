@@ -9,6 +9,8 @@ import { taskHistory } from "./task-history.ts";
 import { taskActions } from "./task-actions.ts";
 import { referenceSection } from "./task-references.ts";
 import { prepareHandoffDialog } from "./handoff-dialog.ts";
+import { lifecycleSection } from "./lifecycle-section.ts";
+import { linkedRequests } from "./linked-requests.ts";
 
 export function taskDetailView(ctx: UiContext, task: HubTask): HTMLElement {
 	const sessions = ctx.state.sessions.filter((item) => item.taskId === task.id);
@@ -40,7 +42,7 @@ export function taskDetailView(ctx: UiContext, task: HubTask): HTMLElement {
 		el(
 			"div",
 			{ class: "detail-layout" },
-			el("div", { class: "stack stack--large" }, editSection(ctx, task), commentSection(ctx, task), referenceSection(ctx, task), questionSection(ctx, task), taskHistory(ctx, task), resultSection(ctx, task, results), taskActions(ctx, task)),
+			el("div", { class: "stack stack--large" }, lifecycleSection(ctx, task), editSection(ctx, task), commentSection(ctx, task), referenceSection(ctx, task), questionSection(ctx, task), taskHistory(ctx, task), resultSection(ctx, task, results), taskActions(ctx, task)),
 			el(
 				"aside",
 				{ class: "context-rail" },
@@ -55,12 +57,7 @@ export function taskDetailView(ctx: UiContext, task: HubTask): HTMLElement {
 						["Updated", formatTime(task.updatedAt)],
 					]),
 				),
-				el(
-					"section",
-					{ class: "detail-section" },
-					el("h2", {}, "Questions"),
-					requests.length === 0 ? el("p", { class: "muted" }, "No formal questions yet.") : el("ul", { class: "plain-list" }, ...requests.map((request) => el("li", {}, badge(request.status, request.status === "open" ? "warning" : "success"), el("span", {}, request.prompt)))),
-				),
+				linkedRequests(requests),
 				sessions.length === 0 ? el("section", { class: "detail-section detail-section--caution" }, el("h2", {}, "No session"), el("p", {}, "This task is still fully usable. A session starts only after explicit delegation or attachment.")) : sessionChoices(ctx, task, sessions.map((item) => item.id)),
 			),
 		),

@@ -6,6 +6,7 @@ import type { UiContext } from "../ui-context.ts";
 export function taskActions(ctx: UiContext, task: HubTask): HTMLElement {
 	const note = el("textarea", { class: "textarea", name: "completionNote", rows: "3", placeholder: "Record the human decision" });
   const hasActiveWork = ctx.state.attempts.some((attempt) => attempt.id === task.primaryAttemptId && attempt.phase !== 'finished');
+	const hasLifecycleWork = task.scopeRevision > 0;
   const execution = el("select", { class: "select", name: "activeExecutionDecision", required: hasActiveWork }, el('option', { value: '' }, 'Choose execution consequence'), el("option", { value: "allow_to_continue" }, "Allow active execution to continue"), el("option", { value: "request_stop" }, "Request stop separately"));
   const executionField = label('If execution is active', execution);
   executionField.hidden = !hasActiveWork;
@@ -14,7 +15,9 @@ export function taskActions(ctx: UiContext, task: HubTask): HTMLElement {
 	if (task.status === "done" || task.status === "canceled") {
 		actions.append(button("Reopen to backlog", "secondary", () => void setStatus(ctx, task, form, "backlog")));
 	} else {
-		actions.append(button("Complete task", "primary", () => void setStatus(ctx, task, form, "done")), button("Cancel task", "danger", () => void setStatus(ctx, task, form, "canceled")));
+		if (!hasLifecycleWork) actions.append(button("Complete task", "primary", () => void setStatus(ctx, task, form, "done")));
+		else form.append(el("p", { class: "muted" }, "Execution results are accepted only in Reliable lifecycle. Acceptance does not stop the attempt."));
+		actions.append(button("Cancel task", "danger", () => void setStatus(ctx, task, form, "canceled")));
 	}
 	actions.append(button("Archive task", "quiet", () => void ctx.command({ commandId: commandId(), type: "task.archive", target: { kind: "task", id: task.id }, expected: { task: task.revision }, payload: { reason: findFormValue(form, "completionNote") || undefined } }, "Task archived. History remains available.")));
 	form.append(actions);

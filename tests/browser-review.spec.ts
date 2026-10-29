@@ -155,26 +155,17 @@ test("Given an ended result, when revision is requested, then a continuation att
 	}
 });
 
-test("Given active work and a selected result, when completing, then execution consequence requires an explicit visible choice", async ({ page }) => {
+test("Given active work and a checkpoint result, when reviewing it, then acceptance remains unavailable without stopping the attempt", async ({ page }) => {
 	const app = await startReviewBrowserHub(page);
 	try {
 		const setup = await createResult(page, app, "Complete active browser result");
-		const statusBeforeCompletion = (await getState(page, app)).tasks.find((item) => item.id === setup.taskId)?.status;
-		await page.getByRole("button", { name: "Complete task" }).first().click();
-		const dialog = page.getByRole("dialog", { name: "Complete task" });
-		await expect(dialog.getByLabel("Active execution consequence")).toHaveValue("");
-		await dialog.getByLabel("Completion note").fill("Accepted after browser review");
-		await dialog.getByLabel("Active execution consequence").selectOption("request_stop");
+		const lifecycle = page.getByRole("region", { name: "Reliable lifecycle" });
+		await expect(lifecycle.getByText("checkpoint", { exact: true })).toBeVisible();
+		await expect(lifecycle.getByRole("button", { name: "Record acceptance decision" })).toBeDisabled();
 		await page.screenshot({ path: ".omo/evidence/result-review/explicit-completion-choice.png" });
-		await dialog.getByLabel("Active execution consequence").selectOption("");
-		await dialog.getByRole("button", { name: "Confirm completion" }).click();
-		expect((await getState(page, app)).tasks.find((item) => item.id === setup.taskId)?.status).toBe(statusBeforeCompletion);
-		await dialog.getByLabel("Active execution consequence").selectOption("request_stop");
-		await dialog.getByRole("button", { name: "Confirm completion" }).click();
-		await expect(dialog).toBeHidden();
 		const state = await getState(page, app);
-		expect(state.tasks.find((item) => item.id === setup.taskId)?.status).toBe("done");
-		expect(state.attempts.find((item) => item.id === setup.attemptId)?.stopRequestedAt).toBeTruthy();
+		expect(state.tasks.find((item) => item.id === setup.taskId)?.status).toBe("active");
+		expect(state.attempts.find((item) => item.id === setup.attemptId)?.stopRequestedAt).toBeUndefined();
 	} finally {
 		await app.close();
 	}
