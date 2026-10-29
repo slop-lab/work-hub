@@ -10,6 +10,13 @@ export const bridgeScopeSchema = z.strictObject({
   sessionId: z.string().min(1),
   attemptId: z.string().min(1),
   bindingGeneration: z.number().int().positive(),
+  installationId: z.string().min(1).optional(),
+  nativeSessionDigest: z.string().min(1).optional(),
+  deliveryDigest: z.string().min(1).optional(),
+  incarnation: z.string().min(1).optional(),
+  targetWorkspaceId: z.string().uuid().optional(),
+  hostId: z.string().min(1).optional(),
+  nativeSessionId: z.string().min(1).optional(),
   allowedCommands: z.array(z.enum(['request.create', 'request.respond', 'result.submit', 'attempt.report', 'bridge.response.ack'])).min(1),
   expiresAt: z.iso.datetime(),
 });
@@ -26,11 +33,18 @@ export type Identity = {
   readonly kind: 'user' | 'browser' | 'bridge';
   readonly scope?: BridgeScope;
 };
+export const recipientIntegrationSchema = z.strictObject({
+  installationId: z.string().min(1), hostId: z.string().min(1),
+  workHubWorkspaceId: z.string().min(1), targetWorkspaceId: z.string().uuid(),
+  incarnation: z.string().min(1), authorization: z.string().min(16),
+});
+export type RecipientIntegration = z.infer<typeof recipientIntegrationSchema>;
 export class BootstrapError extends Error {}
 
 export class AuthStore {
   readonly db: DatabaseSync;
-  constructor(path: string) {
+  private readonly recipientIntegrations = new Map<string, RecipientIntegration>();
+  constructor(path: string, integrations: readonly RecipientIntegration[] = []) {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS credentials (
@@ -38,6 +52,7 @@ export class AuthStore {
         kind TEXT NOT NULL, expires_at TEXT, scope_json TEXT
       );
       CREATE TABLE IF NOT EXISTS bootstrap (id INTEGER PRIMARY KEY CHECK(id=1));`);
+    for (const integration of integrations) this.configureRecipientIntegration(integration);
   }
   bootstrap(userId: string): string {
     this.db.exec('BEGIN IMMEDIATE');
@@ -63,6 +78,17 @@ export class AuthStore {
   }
   createBrowserSession(userId: string): string {
     return this.issue({ userId, kind: 'browser' }, new Date(Date.now() + 12 * 3600_000).toISOString());
+  }
+  configureRecipientIntegration(input: RecipientIntegration): string {
+    const integration = recipientIntegrationSchema.parse(input);
+    this.recipientIntegrations.set(this.digest(integration.authorization), integration);
+    return integration.authorization;
+  }
+  authenticateRecipientIntegration(authorization: string): RecipientIntegration | undefined {
+    return this.recipientIntegrations.get(this.digest(authorization));
+  }
+  revokeRecipientIntegration(authorization: string): void {
+    this.recipientIntegrations.delete(this.digest(authorization));
   }
   private issue(identity: Identity, expiresAt?: string): string {
     const token = randomBytes(32).toString('base64url');

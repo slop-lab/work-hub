@@ -15,6 +15,7 @@ import { ClaudeCodeRuntimeConnector } from './claude/runtime.ts';
 import { claudeConnectionSchema } from './claude/schema.ts';
 import { AkbClient, AkbContextService, akbConnectionSchema } from './akb/index.ts';
 import { openCodeInventory, codexInventory, claudeInventory } from './runtime-inventory.ts';
+import { recipientIntegrationSchema, type RecipientIntegration } from "../api/auth-store.ts";
 
 const configurationSchema = z.strictObject({
   opencode: z.array(connectionSchema).max(20).default([]),
@@ -22,6 +23,7 @@ const configurationSchema = z.strictObject({
   claude: z.array(claudeConnectionSchema).max(20).default([]),
   akb: z.array(akbConnectionSchema).max(20).default([]),
   dim: z.array(dimConnectionSchema).max(20).default([]),
+  recipientIntegrations: z.array(recipientIntegrationSchema).max(100).default([]),
 });
 export class ConfiguredConnections {
   readonly runtime: Readonly<Record<string, AgentRuntimeConnector>>;
@@ -31,12 +33,24 @@ export class ConfiguredConnections {
   private readonly codex: Readonly<Record<string, CodexRuntimeConnector>>;
   private readonly claude: Readonly<Record<string, ClaudeCodeRuntimeConnector>>;
   private readonly knowledge: Readonly<Record<string, AkbClient>>;
+  readonly recipientIntegrations: readonly RecipientIntegration[];
   constructor(path: string, ledgerPath: string) {
     const parsed = configurationSchema.parse(readPrivateConfiguration(path));
+    this.recipientIntegrations = parsed.recipientIntegrations;
     const ids = [...parsed.opencode, ...parsed.codex, ...parsed.claude, ...parsed.akb, ...parsed.dim]
       .map((connection) => connection.installationId);
     if (new Set(ids).size !== ids.length) throw new HubError({ code: 'connection_id_conflict', category: 'validation',
       message: 'Saved connection installation IDs must be unique.', retry: 'never' });
+    for (const integration of parsed.recipientIntegrations) {
+      const runtime = parsed.opencode
+        .find((connection) => connection.installationId === integration.installationId);
+      const recipient = runtime?.recipient ?? runtime?.environment;
+      if (recipient === undefined || recipient.hostId !== integration.hostId ||
+        recipient.workspaceId !== integration.targetWorkspaceId || recipient.incarnation !== integration.incarnation) throw new HubError({
+          code: 'recipient_runtime_mapping', category: 'identity_mismatch',
+          message: 'Each recipient integration must match one configured runtime host, workspace UUID and incarnation.', retry: 'never',
+        });
+    }
     this.ledger = new ConnectorLedger(ledgerPath);
     this.openCode = Object.fromEntries(parsed.opencode.map((connection) =>
       [connection.installationId, new OpenCodeRuntimeConnector(this.ledger, connection)]));

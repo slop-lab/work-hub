@@ -18,7 +18,7 @@ const connections = connectionFile === undefined ? undefined : new ConfiguredCon
 const hub = new Hub(join(config.dataDir, 'hub.sqlite'), connections === undefined ? {} : {
   mode: 'external', connectors: { runtime: connections.runtime, execution: connections.execution },
 });
-const auth = new AuthStore(join(config.dataDir, 'auth.sqlite'));
+const auth = new AuthStore(join(config.dataDir, 'auth.sqlite'), connections?.recipientIntegrations ?? []);
 const app = createApplication({ hub, auth, origin: config.origin, secureCookies: config.secureCookies,
   ...(connections === undefined ? {} : { connections }) });
 const webRoot = fileURLToPath(new URL('../../dist/web/', import.meta.url));
