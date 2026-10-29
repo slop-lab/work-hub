@@ -1,4 +1,5 @@
 import type { Actor } from "../domain/authorization.ts";
+import { criterionEvidenceSatisfies } from "../domain/lifecycle-evidence.ts";
 import { requireProject } from "../domain/authorization.ts";
 import { commandTargetId } from "../domain/commands.ts";
 import { conflict, forbidden } from "../domain/errors.ts";
@@ -72,6 +73,27 @@ export class WorkHandler {
     const task = this.work.getTask(actor.workspaceId, id);
     authorizeTask(actor, task);
     requireRevision(task.revision, command.expected?.task, "Task");
+    const scopeFields = [
+      ...(command.payload.title !== undefined && command.payload.title !== task.title ? ["title"] : []),
+      ...(command.payload.description !== undefined && command.payload.description !== task.description ? ["description"] : []),
+      ...(command.payload.expectedOutcome !== undefined && command.payload.expectedOutcome !== (task.expectedOutcome ?? "") ? ["expected outcome"] : []),
+    ];
+    if (scopeFields.length > 0 && (task.status === "done" ||
+      this.lifecycle.view(actor.workspaceId, id).acceptance?.decision === "accepted")) {
+      throw conflict("terminal_scope_accepted", "Accepted terminal scope cannot be edited; create explicit follow-up work instead.");
+    }
+    if (scopeFields.length > 0 && (task.primaryAttemptId !== undefined || task.scopeRevision > 0)) {
+      this.lifecycle.amend({ workspaceId: actor.workspaceId, taskId: id, authorId: actor.id,
+        summary: `Task brief updated: ${scopeFields.join(", ")}.`, criteria: [], supersedesCriterionIds: [] });
+      this.work.addEntry(actor.workspaceId, id, actor.id, "scope_change", {
+        before: { title: task.title, description: task.description, expectedOutcome: task.expectedOutcome },
+        after: {
+          title: command.payload.title ?? task.title,
+          description: command.payload.description ?? task.description,
+          expectedOutcome: command.payload.expectedOutcome ?? task.expectedOutcome,
+        },
+      });
+    }
     const updated = this.work.updateTask(actor.workspaceId, id, {
       ...(command.payload.title === undefined ? {} : { title: command.payload.title }),
       ...(command.payload.description === undefined ? {} : { description: command.payload.description }),
@@ -105,10 +127,11 @@ export class WorkHandler {
           throw conflict("result_obsolete", "Only the current primary attempt result can complete the task.");
         }
         if (result.kind !== "final") throw conflict("result_not_final", "Checkpoint results cannot complete the task.");
-        const evidence = new Map(result.criterionEvidence.map((item) => [item.criterionId, item.status]));
+        const evidence = new Map(result.criterionEvidence.map((item) => [item.criterionId, item]));
         const criteria = this.lifecycle.currentCriteria(actor.workspaceId, id);
         if (criteria.some((criterion) =>
-          criterion.requirement === "required" && evidence.get(criterion.id) !== "satisfied")) {
+          criterion.requirement === "required" &&
+          !criterionEvidenceSatisfies(criterion, evidence.get(criterion.id)))) {
           throw conflict("acceptance_criteria_missing", "Required criteria lack satisfactory evidence.");
         }
         if (criteria.length > 0) {

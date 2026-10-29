@@ -38,13 +38,27 @@ test("AT-35 task and profile edits cannot rewrite a running attempt's immutable 
     const taskId = await createTask(context.hub, "35");
     const attempt = await delegateNone(context.hub, taskId, "35");
     const before = JSON.stringify(attempt.inputSnapshot);
+    const beforeTask = context.hub.getTask(member, taskId);
     await context.hub.execute(member, { commandId: "edit-task-35", type: "task.update", target: { kind: "task", id: taskId }, expected: { task: context.hub.getTask(member, taskId).revision }, payload: { title: "Changed after delegation" } });
     await context.hub.execute(admin, { commandId: "edit-profile-35", type: "profile.update", target: { kind: "profile", id: "profile-structured" }, expected: { profile: 1 }, payload: { configuration: { changed: true } } });
     const after = context.hub.snapshot(member).attempts.find((item) => item.id === attempt.id);
     assert.ok(after);
     assert.equal(JSON.stringify(after.inputSnapshot), before);
     assert.equal(after.profileRevision, 1);
-    assert.equal(context.hub.getTask(member, taskId).title, "Changed after delegation");
+    const updatedTask = context.hub.getTask(member, taskId);
+    assert.equal(updatedTask.title, "Changed after delegation");
+    assert.equal(updatedTask.scopeRevision, beforeTask.scopeRevision + 1);
+    assert.equal(context.hub.getTaskLifecycle(member, taskId).amendments.at(-1)?.summary,
+      "Task brief updated: title.");
+    const exported = z.object({ records: z.object({ entries: z.array(z.object({
+      taskId: z.string(), entryType: z.string(), bodyJson: z.string(),
+    })) }) }).parse(JSON.parse(context.hub.exportRecords(admin)));
+    const scopeChange = exported.records.entries.find((entry) =>
+      entry.taskId === taskId && entry.entryType === "scope_change");
+    assert.deepEqual(JSON.parse(scopeChange?.bodyJson ?? "null"), {
+      before: { title: "Acceptance 35", description: "Description 35" },
+      after: { title: "Changed after delegation", description: "Description 35" },
+    });
   } finally { context.close(); }
 });
 
