@@ -1,0 +1,10 @@
+{
+  "name": "@work-hub/dim-host-plugin-recipient",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=24.0.0" },
+  "private": true,
+  "workHubDimCompatibility": { "source": "ff4ec121e07d351aabb717c3fb030c76ce67e63a" }
+}
