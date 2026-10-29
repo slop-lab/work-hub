@@ -156,10 +156,9 @@ test("Given a fresh preview, when handoff result and follow-up are reviewed, the
 			await page.goto(handoffUrl);
 			await expect(page.getByRole("region", { name: "Exact source" })).toBeVisible();
 			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
-			const main = page.locator("#main-content");
-			await main.evaluate((element) => { element.scrollTop = 0; });
-			await expect(main).toHaveJSProperty("scrollTop", 0);
-			await page.screenshot({ path: `.omo/evidence/handoff/lifecycle-top-${width}.png` });
+			await capture(page.locator(".task-hero"), `.omo/evidence/handoff/lifecycle-hero-${width}.png`);
+			await capture(page.getByRole("region", { name: "Exact source" }), `.omo/evidence/handoff/lifecycle-source-${width}.png`);
+			await capture(page.getByRole("region", { name: "Recipient identity" }), `.omo/evidence/handoff/lifecycle-recipient-${width}.png`);
 			await capture(page.getByRole("region", { name: "Delivery status" }), `.omo/evidence/handoff/lifecycle-delivery-${width}.png`);
 			await page.setViewportSize({ width, height: 1800 });
 			await capture(result.locator(".section-heading"), `.omo/evidence/handoff/result-heading-${width}.png`);
