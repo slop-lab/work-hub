@@ -72,6 +72,8 @@ export type SessionView = {
   readonly taskId: string;
   readonly revision: number;
   readonly runtimeInstallationId: string;
+  readonly profileId?: string;
+  readonly profileRevision?: number;
   readonly nativeIdentityKey?: string;
   readonly lifecycle: "opening" | "open" | "closed";
   readonly controlMode: "observe" | "control";
@@ -157,6 +159,10 @@ export type ResultView = {
   readonly limitations: readonly string[];
   readonly referenceIds: readonly string[];
   readonly evidence: readonly Readonly<Record<string, unknown>>[];
+  readonly artifacts: readonly Readonly<Record<string, unknown>>[];
+  readonly outcome: "passed" | "failed" | "partial" | "blocked" | "unspecified";
+  readonly submissionKey?: string;
+  readonly binding?: Readonly<Record<string, unknown>>;
   readonly createdAt: string;
 };
 

@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { envelope, idSchema, textSchema } from "./schema-common.ts";
 import { referenceInput } from '../artifacts/references.ts';
+import { SourceCommitSchema, VerificationOutcomeSchema } from "../contracts/handoff.ts";
+import { DigestSchema } from "../contracts/common.ts";
 
 export const workCommandSchemas = [
   envelope('reference.create', referenceInput),
@@ -72,9 +74,18 @@ export const workCommandSchemas = [
   envelope(
     "result.submit",
     z.strictObject({
+      submissionKey: z.string().trim().min(1).max(512).optional(),
+      outcome: VerificationOutcomeSchema.default("unspecified"),
+      inputDigest: DigestSchema.optional(),
+      actualCommit: SourceCommitSchema.optional(),
+      actualContextDigest: DigestSchema.optional(),
       summary: textSchema.min(1),
       limitations: z.array(textSchema),
       referenceIds: z.array(idSchema),
+      artifacts: z.array(z.strictObject({
+        repositoryId: idSchema, sourceCommit: SourceCommitSchema,
+        path: z.string().min(1).max(4096), digest: DigestSchema.optional(),
+      })).max(100).default([]),
       evidence: z.array(
         z.strictObject({
           origin: z.union([
