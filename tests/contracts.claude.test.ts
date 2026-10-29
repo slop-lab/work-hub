@@ -116,15 +116,16 @@ test('close rejects new input and drains an active SDK turn without aborting it'
   let finish: ((value: Awaited<ReturnType<ClaudeSdkDriver['run']>>) => void) | undefined;
   let activeInputId: Parameters<ClaudeSdkDriver['run']>[0]['inputId'] | undefined;
   const pending = new Promise<Awaited<ReturnType<ClaudeSdkDriver['run']>>>((resolve) => { finish = resolve; });
-  const connector = new ClaudeCodeRuntimeConnector(item.ledger, connection, { ...item.driver, run(input) {
+  const connector = new ClaudeCodeRuntimeConnector(item.ledger, connection, { ...item.driver, run(input, observer) {
     activeInputId = input.inputId;
+    observer?.accepted({ sessionId: input.sessionId, inputId: input.inputId });
     return pending;
   } });
   try {
     await connector.openSession(context('open'), { hubSessionId: 'logical', mode: 'attach', nativeSession: item.nativeSession,
       sessionLaunchOwner: 'external', requestedControl: 'control', configuration: { model: 'claude-sonnet-4-5' },
       route: { kind: 'external', route: { id: 'configured', ownerInstallationId: connection.installationId, kind: 'sdk' } } });
-    const active = connector.startAttempt(context('start'), item.input);
+    assert.equal((await connector.startAttempt(context('start'), item.input)).status, 'confirmed');
     let drained = false;
     const closing = connector.close().then(() => { drained = true; });
     await Promise.resolve();
@@ -135,7 +136,6 @@ test('close rejects new input and drains an active SDK turn without aborting it'
     assert.ok(activeInputId);
     finish({ sessionId: item.nativeSession.id, inputId: activeInputId,
       messages: [{ kind: 'result', id: 'result-close', outcome: 'completed', summary: 'done', observedAt: new Date(4).toISOString() }] });
-    assert.equal((await active).status, 'confirmed');
     await closing;
     assert.equal(drained, true);
   } finally { item.ledger.close(); }

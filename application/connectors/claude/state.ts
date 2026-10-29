@@ -1,7 +1,7 @@
 import type { CallContext, NativeRef, RuntimeTarget } from '../../contracts/index.ts';
 import { HubError } from '../../domain/errors.ts';
 import type { ConnectorLedger } from '../ledger.ts';
-import { claudeBindingSchema, type ClaudeBinding, type ClaudeConnection } from './schema.ts';
+import { claudeBindingSchema, type ClaudeBinding, type ClaudeBoundMessage, type ClaudeConnection } from './schema.ts';
 
 export class ClaudeState {
   readonly ledger: ConnectorLedger;
@@ -28,6 +28,12 @@ export class ClaudeState {
   save(ctx: CallContext, hubSessionId: string, binding: ClaudeBinding): void {
     this.checkInstallation(ctx);
     this.ledger.put(this.ledger.key(ctx, `binding:${hubSessionId}`), binding);
+  }
+
+  appendMessages(ctx: CallContext, hubSessionId: string, messages: readonly ClaudeBoundMessage[]): void {
+    const binding = this.get(ctx, hubSessionId);
+    if (!binding) throw new TypeError('Cannot append Claude messages without a current binding.');
+    this.save(ctx, hubSessionId, { ...binding, messages: [...binding.messages, ...messages] });
   }
 
   target(ctx: CallContext, target: RuntimeTarget, needsControl = false): ClaudeBinding {

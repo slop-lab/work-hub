@@ -6,10 +6,10 @@ import { HubError } from '../../domain/errors.ts';
 import { digest } from '../../persistence/codec.ts';
 import type { ConnectorLedger } from '../ledger.ts';
 import { claudeCapabilities, claudeManifest } from './capabilities.ts';
-import { OfficialClaudeSdkDriver, type ClaudeSdkDriver } from './driver.ts';
+import { ClaudeRunError, OfficialClaudeSdkDriver, type ClaudeRunObserver, type ClaudeSdkDriver } from './driver.ts';
 import { ClaudeObservation } from './observation.ts';
 import { claudeConnectionSchema, claudeDiscoverySchema, claudeSelectionSchema,
-  type ClaudeBoundMessage, type ClaudeConnection, type ClaudeDiscovery } from './schema.ts';
+  type ClaudeConnection, type ClaudeDiscovery } from './schema.ts';
 import { ClaudeState } from './state.ts';
 
 export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
@@ -17,7 +17,7 @@ export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
   private readonly driver: ClaudeSdkDriver;
   private readonly observation: ClaudeObservation;
   private acceptingInput = true;
-  private readonly activeInputs = new Set<Promise<void>>();
+  private readonly activeTurns = new Set<Promise<void>>();
 
   constructor(ledger: ConnectorLedger, connectionInput: ClaudeConnection, driver?: ClaudeSdkDriver) {
     const connection = claudeConnectionSchema.parse(connectionInput);
@@ -105,23 +105,22 @@ export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
 
   startAttempt(ctx: ActionContext, input: AttemptStart) {
     if (!this.acceptingInput) return Promise.reject(closingError());
-    return this.track(this.send(ctx, input));
+    return this.send(ctx, input);
   }
   sendInstruction(ctx: ActionContext, input: InstructionInput) {
     if (!this.acceptingInput) return Promise.reject(closingError());
-    return this.track(this.send(ctx, input));
+    return this.send(ctx, input);
   }
 
-  private track<T>(operation: Promise<T>): Promise<T> {
+  private track(operation: Promise<void>): void {
     const drained = operation.then(() => undefined, () => undefined);
-    this.activeInputs.add(drained);
-    void drained.finally(() => this.activeInputs.delete(drained));
-    return operation;
+    this.activeTurns.add(drained);
+    void drained.then(() => this.activeTurns.delete(drained));
   }
 
   async close(): Promise<void> {
     this.acceptingInput = false;
-    await Promise.all([...this.activeInputs]);
+    await Promise.all([...this.activeTurns]);
   }
 
   private async send(ctx: ActionContext, input: AttemptStart | InstructionInput) {
@@ -152,13 +151,49 @@ export class ClaudeCodeRuntimeConnector implements AgentRuntimeConnector {
       if (!attempt) throw new HubError({ code: 'claude_attempt_missing', category: 'conflict',
         message: 'A follow-up requires a bound attempt.', retry: 'never' });
       this.state.save(ctx, input.target.hubSessionId, { ...binding, attempt });
-      const result = await this.driver.run({ sessionId: binding.nativeId, inputId, prompt, model: binding.selection.model });
-      if (result.sessionId !== binding.nativeId || result.inputId !== inputId) throw new HubError({ code: 'claude_resume_identity_mismatch',
-        category: 'identity_mismatch', message: 'Claude Code resumed a different native session.', retry: 'never' });
-      const messages: readonly ClaudeBoundMessage[] = result.messages.map((message) => ({
-        attemptId: input.target.hubAttemptId, inputId, message,
-      }));
-      this.state.save(ctx, input.target.hubSessionId, { ...binding, attempt, messages: [...binding.messages, ...messages] });
+      let resolveAccepted: (() => void) | undefined;
+      let rejectAccepted: ((error: unknown) => void) | undefined;
+      let inputAccepted = false;
+      const accepted = new Promise<void>((resolve, reject) => {
+        resolveAccepted = resolve;
+        rejectAccepted = reject;
+      });
+      const observer: ClaudeRunObserver = { accepted: (identity) => {
+        try {
+          checkRunIdentity(identity, binding.nativeId, inputId);
+          inputAccepted = true;
+          resolveAccepted?.();
+        } catch (error) {
+          rejectAccepted?.(error);
+          throw error;
+        }
+      } };
+      const completion = this.driver.run({ sessionId: binding.nativeId, inputId, prompt, model: binding.selection.model }, observer)
+        .then((result) => {
+          try {
+            checkRunIdentity(result, binding.nativeId, inputId);
+            this.state.appendMessages(ctx, input.target.hubSessionId, result.messages.map((message) => ({
+              attemptId: input.target.hubAttemptId, inputId, message,
+            })));
+            if (!inputAccepted) resolveAccepted?.();
+          } catch (error) {
+            if (!inputAccepted) rejectAccepted?.(error);
+            throw error;
+          }
+        }, (error: unknown) => {
+          let acceptanceError = error;
+          if (error instanceof ClaudeRunError) {
+            try {
+              checkRunIdentity(error, binding.nativeId, inputId);
+              this.state.appendMessages(ctx, input.target.hubSessionId, error.messages.map((message) => ({
+                attemptId: input.target.hubAttemptId, inputId, message,
+              })));
+            } catch (identityError) { acceptanceError = identityError; }
+          }
+          if (!inputAccepted) rejectAccepted?.(acceptanceError);
+        });
+      this.track(completion);
+      await accepted;
       return { nativeInputRef: this.state.reference('input', inputId),
         nativeExecutionRef: this.state.reference('execution', inputId), acceptance: 'received' as const };
     });
@@ -203,4 +238,9 @@ function unsupported(feature: string): HubError {
 function closingError(): HubError {
   return new HubError({ code: 'claude_connector_closing', category: 'unavailable',
     message: 'The Claude Code connector is closing and no longer accepts new input.', retry: 'manual_action' });
+}
+
+function checkRunIdentity(identity: { readonly sessionId: string; readonly inputId: string }, sessionId: string, inputId: string): void {
+  if (identity.sessionId !== sessionId || identity.inputId !== inputId) throw new HubError({ code: 'claude_resume_identity_mismatch',
+    category: 'identity_mismatch', message: 'Claude Code resumed a different native session.', retry: 'never' });
 }

@@ -30,8 +30,25 @@ export interface ClaudeSdkDriver {
   discover(signal?: AbortSignal): Promise<{ readonly version: string; readonly sessions: readonly ClaudeSession[] }>;
   getSession(sessionId: string, signal?: AbortSignal): Promise<ClaudeSession | undefined>;
   run(input: { readonly sessionId: string; readonly inputId: UUID; readonly prompt: string; readonly model: string;
-    readonly signal?: AbortSignal }): Promise<{ readonly sessionId: string; readonly inputId: UUID;
+    readonly signal?: AbortSignal }, observer?: ClaudeRunObserver): Promise<{ readonly sessionId: string; readonly inputId: UUID;
       readonly messages: readonly ClaudeMessage[] }>;
+}
+
+export interface ClaudeRunObserver {
+  readonly accepted: (identity: { readonly sessionId: string; readonly inputId: UUID }) => void;
+}
+
+export class ClaudeRunError extends Error {
+  readonly name = 'ClaudeRunError';
+  readonly sessionId: string;
+  readonly inputId: UUID;
+  readonly messages: readonly ClaudeMessage[];
+  constructor(sessionId: string, inputId: UUID, messages: readonly ClaudeMessage[], cause: unknown) {
+    super('Claude Agent SDK stream failed.', { cause });
+    this.sessionId = sessionId;
+    this.inputId = inputId;
+    this.messages = messages;
+  }
 }
 
 const rawSessionSchema = z.object({ sessionId: z.string(), summary: z.string().optional(), cwd: z.string().optional(),
@@ -73,7 +90,7 @@ export class OfficialClaudeSdkDriver implements ClaudeSdkDriver {
   }
 
   async run(input: { readonly sessionId: string; readonly inputId: UUID; readonly prompt: string; readonly model: string;
-    readonly signal?: AbortSignal }) {
+    readonly signal?: AbortSignal }, observer?: ClaudeRunObserver) {
     const sdk = await this.sdk();
     const abortController = new AbortController();
     input.signal?.addEventListener('abort', () => abortController.abort(input.signal?.reason), { once: true });
@@ -92,24 +109,35 @@ export class OfficialClaudeSdkDriver implements ClaudeSdkDriver {
     let inputAcknowledged = false;
     let affiliated = false;
     let pendingLifecycle: unknown[] = [];
-    for await (const value of stream) {
-      const frame = parseClaudeTurnFrame(value, input.inputId, affiliated);
-      observedSessionId ??= frame.sessionId;
-      if (frame.cleared) pendingLifecycle = [];
-      if (!affiliated && !frame.acknowledged && isClaudeLifecycleFrame(value)) pendingLifecycle = [...pendingLifecycle, value].slice(-256);
-      if (frame.acknowledged && pendingLifecycle.length > 0) {
-        for (const pending of pendingLifecycle) messages.push(...(parseClaudeTurnFrame(pending, input.inputId, true).messages ?? []));
-        pendingLifecycle = [];
+    try {
+      for await (const value of stream) {
+        const frame = parseClaudeTurnFrame(value, input.inputId, affiliated);
+        observedSessionId ??= frame.sessionId;
+        if (frame.cleared) pendingLifecycle = [];
+        if (!affiliated && !frame.acknowledged && isClaudeLifecycleFrame(value)) pendingLifecycle = [...pendingLifecycle, value].slice(-256);
+        if (frame.acknowledged && pendingLifecycle.length > 0) {
+          for (const pending of pendingLifecycle) messages.push(...(parseClaudeTurnFrame(pending, input.inputId, true).messages ?? []));
+          pendingLifecycle = [];
+        }
+        affiliated = frame.affiliated;
+        if (frame.acknowledged && !inputAcknowledged) observer?.accepted({
+          sessionId: observedSessionId ?? input.sessionId,
+          inputId: input.inputId,
+        });
+        inputAcknowledged ||= frame.acknowledged;
+        messages.push(...(frame.messages ?? []));
       }
-      affiliated = frame.affiliated;
-      inputAcknowledged ||= frame.acknowledged;
-      messages.push(...(frame.messages ?? []));
+    } catch (error) {
+      throw new ClaudeRunError(observedSessionId ?? input.sessionId, input.inputId, bounded(messages, input.inputId), error);
     }
     if (!inputAcknowledged) throw new TypeError('Claude Agent SDK did not attest the exact submitted user message UUID.');
-    const boundedMessages: readonly ClaudeMessage[] = messages.length <= MAX_TURN_MESSAGES ? messages : [{
-      kind: 'coverage', id: `coverage:${input.inputId}`, reason: 'Claude SDK lifecycle frames exceeded the retained turn limit.',
-      observedAt: new Date().toISOString(),
-    }, ...messages.slice(-(MAX_TURN_MESSAGES - 1))];
-    return { sessionId: observedSessionId ?? input.sessionId, inputId: input.inputId, messages: boundedMessages };
+    return { sessionId: observedSessionId ?? input.sessionId, inputId: input.inputId, messages: bounded(messages, input.inputId) };
   }
+}
+
+function bounded(messages: readonly ClaudeMessage[], inputId: UUID): readonly ClaudeMessage[] {
+  return messages.length <= MAX_TURN_MESSAGES ? messages : [{
+    kind: 'coverage', id: `coverage:${inputId}`, reason: 'Claude SDK lifecycle frames exceeded the retained turn limit.',
+    observedAt: new Date().toISOString(),
+  }, ...messages.slice(-(MAX_TURN_MESSAGES - 1))];
 }
