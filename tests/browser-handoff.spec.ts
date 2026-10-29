@@ -1,6 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { admin, createTask, delegateNone, drainIdle, finishAttempt } from "./acceptance-fixture.ts";
 import { startBrowserHub } from "./browser-fixture.ts";
+
+async function capture(locator: Locator, path: string): Promise<void> {
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		try { await locator.screenshot({ path }); return; }
+		catch (error) {
+			if (!(error instanceof Error) || !error.message.includes("not attached") || attempt === 2) throw error;
+		}
+	}
+}
 
 test("Given a task with multiple recipient sessions, when its detail opens, then every handoff is an explicit attempt URL", async ({ page }) => {
 	const app = await startBrowserHub(page);
@@ -74,10 +83,19 @@ test("Given exact source and recipient input, when preview becomes stale, then t
 		await expect(prompt.locator("pre")).toHaveText(preview.prompt);
 		await expect(prompt.getByText(preview.promptDigest, { exact: true })).toBeVisible();
 		await expect(prompt.getByText(preview.previewDigest, { exact: true })).toBeVisible();
+		await expect(prompt).toContainText("pending_session_creation");
+		await expect(prompt).toContainText("assigned_after_creation");
 		for (const width of [375, 768, 1280] as const) {
 			await page.setViewportSize({ width, height: 900 });
 			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
-			await dialog.screenshot({ path: `.omo/evidence/handoff/preview-${width}.png` });
+			const form = dialog.locator("form");
+			await form.evaluate((element) => { element.scrollTop = 0; });
+			await dialog.screenshot({ path: `.omo/evidence/handoff/preview-top-${width}.png` });
+			await form.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+			await dialog.screenshot({ path: `.omo/evidence/handoff/preview-bottom-${width}.png` });
+			await dialog.getByRole("button", { name: "Preview exact handoff" }).focus();
+			await page.keyboard.press("Tab");
+			await dialog.screenshot({ path: `.omo/evidence/handoff/preview-focus-${width}.png` });
 		}
 
 		await app.hub.execute(admin, { commandId: "browser-handoff-stale-task", type: "task.update", target: { kind: "task", id: taskId }, expected: { task: app.hub.getTask(admin, taskId).revision }, payload: { description: "Changed after preview" } });
@@ -116,27 +134,48 @@ test("Given a fresh preview, when handoff result and follow-up are reviewed, the
 		await page.reload();
 		await expect(page.getByRole("region", { name: "Exact source" }).getByText("e".repeat(40), { exact: true })).toBeVisible();
 		await expect(page.getByRole("region", { name: "Delivery status" })).toContainText("acknowledged");
+		await expect(page.getByRole("region", { name: "Recipient identity" })).toContainText("assigned_after_creation");
 
 		const detail = app.hub.getHandoff(admin, attemptId);
 		const inputDigest = detail.attempt.inputSnapshot["digest"];
 		if (typeof inputDigest !== "string") throw new TypeError("Handoff input digest missing");
-		await app.hub.execute(admin, { commandId: "browser-handoff-result", type: "result.submit", target: { kind: "attempt", id: attemptId }, payload: { submissionKey: "browser-native", outcome: "partial", inputDigest, actualCommit: "e".repeat(40), actualContextDigest: `sha256:${"f".repeat(64)}`, summary: "Native verification needs one follow-up", limitations: ["One platform remains blocked"], referenceIds: [], evidence: [{ origin: "external_check", detail: "Native suite report retained" }] } });
+		await app.hub.execute(admin, { commandId: "browser-handoff-result", type: "result.submit", target: { kind: "attempt", id: attemptId }, payload: { submissionKey: "browser-native", outcome: "partial", inputDigest, actualCommit: "e".repeat(40), actualContextDigest: `sha256:${"f".repeat(64)}`, summary: "Native verification needs one follow-up", limitations: ["One platform remains blocked"], referenceIds: [],
+			artifacts: [{ repositoryId: initialDetail.preview.repository.id, sourceCommit: "e".repeat(40),
+				path: "docs/native-validation-report.md", digest: `sha256:${"a".repeat(64)}` }],
+			evidence: [{ origin: "external_check", detail: "Native suite report retained" }] } });
 		await page.reload();
 		const result = page.locator(".result-card");
 		await expect(result).toContainText("Native verification needs one follow-up");
 		await expect(result).toContainText("partial");
 		await expect(result).toContainText("e".repeat(40));
 		await expect(result).toContainText(`sha256:${"f".repeat(64)}`);
+		await expect(result).toContainText("docs/native-validation-report.md");
+		const handoffUrl = page.url();
 		for (const width of [375, 768, 1280] as const) {
 			await page.setViewportSize({ width, height: 900 });
+			await page.goto(handoffUrl);
+			await expect(page.getByRole("region", { name: "Exact source" })).toBeVisible();
 			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
-			await page.screenshot({ path: `.omo/evidence/handoff/lifecycle-${width}.png`, fullPage: true });
+			const main = page.locator("#main-content");
+			await main.evaluate((element) => { element.scrollTop = 0; });
+			await expect(main).toHaveJSProperty("scrollTop", 0);
+			await page.screenshot({ path: `.omo/evidence/handoff/lifecycle-top-${width}.png` });
+			await capture(page.getByRole("region", { name: "Delivery status" }), `.omo/evidence/handoff/lifecycle-delivery-${width}.png`);
+			await page.setViewportSize({ width, height: 1800 });
+			await capture(result.locator(".section-heading"), `.omo/evidence/handoff/result-heading-${width}.png`);
+			await capture(result.getByLabel("Result provenance"), `.omo/evidence/handoff/result-provenance-${width}.png`);
+			await capture(result.getByLabel("Result limitations"), `.omo/evidence/handoff/result-limitations-${width}.png`);
+			await capture(result.getByRole("group", { name: "Result actions" }), `.omo/evidence/handoff/result-actions-${width}.png`);
 		}
 
 		await result.getByRole("button", { name: "Request revision" }).click();
 		const revision = page.getByRole("dialog", { name: "Request revision" });
 		await revision.getByLabel("Revision instruction").fill("Resolve the blocked platform and report the same source");
 		await revision.getByLabel("Instruction timing").selectOption("immediate");
+		for (const width of [375, 768, 1280] as const) {
+			await page.setViewportSize({ width, height: 900 });
+			await revision.screenshot({ path: `.omo/evidence/handoff/followup-${width}.png` });
+		}
 		await revision.getByRole("button", { name: "Send revision" }).click();
 		await expect(revision).toBeHidden();
 
@@ -144,6 +183,10 @@ test("Given a fresh preview, when handoff result and follow-up are reviewed, the
 		const completion = page.getByRole("dialog", { name: "Complete task" });
 		await completion.getByLabel("Completion note").fill("Human accepted the partial verification with recorded limitation");
 		await completion.getByLabel("Active execution consequence").selectOption("allow_to_continue");
+		for (const width of [375, 768, 1280] as const) {
+			await page.setViewportSize({ width, height: 900 });
+			await completion.screenshot({ path: `.omo/evidence/handoff/human-acceptance-${width}.png` });
+		}
 		await completion.getByRole("button", { name: "Confirm completion" }).click();
 		await expect(completion).toBeHidden();
 		await expect(page.getByRole("button", { name: "Reopen to backlog" })).toBeVisible();
