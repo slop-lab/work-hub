@@ -71,6 +71,7 @@ export class Hub {
   actorForUser(id: string): Actor | undefined { return this.administration.users.actorForUser(id); }
 
   getTask(actor: Actor, id: string) { return this.queries.getTask(actor, id); }
+  getTaskLifecycle(actor: Actor, id: string) { return this.queries.getTaskLifecycle(actor, id); }
   getReference(actor: Actor, id: string) { return this.references.get(actor, id); }
   captureExternalReference(actor: Actor, input: ExternalCapture): ReturnType<ExternalCaptureService['capture']>;
   captureExternalReference(actor: Actor, input: ExternalCaptureSelection): ReturnType<ExternalCaptureService['preflight']>;
@@ -91,13 +92,10 @@ export class Hub {
   listProjectRepositories(actor: Actor, projectId: string) { return this.handoffService.listRepositories(actor, projectId); }
   previewHandoff(actor: Actor, input: HandoffPreviewRequest) { return this.handoffService.preview(actor, input); }
   getHandoff(actor: Actor, attemptId: string) {
-    const handoff = this.handoffService.get(actor, attemptId);
-    return { ...handoff,
-      results: this.snapshot(actor).results.filter((result) => result.attemptId === attemptId) };
+    return this.handoffService.get(actor, attemptId);
   }
-  listHandoffs(actor: Actor, taskId: string) {
-    return this.handoffService.list(actor, taskId).map((handoff) => ({ ...handoff,
-      results: this.snapshot(actor).results.filter((result) => result.attemptId === handoff.attempt.id) }));
+  listHandoffs(actor: Actor, taskId: string, limit = 50) {
+    return this.handoffService.list(actor, taskId, limit);
   }
   recipientAssignment(input: RecipientAssignmentRequest) { return this.handoffService.assignment(input); }
   acknowledgeAttemptDelivery(actor: Actor, input: {

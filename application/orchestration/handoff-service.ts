@@ -6,6 +6,7 @@ import { digest } from "../persistence/codec.ts";
 import type { ExecutionRepository } from "../persistence/execution-repository.ts";
 import type { HandoffRepository } from "../persistence/handoff-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
+import type { ResultRepository } from "../persistence/result-repository.ts";
 import type { RuntimeScope } from "./bridge-queries.ts";
 
 export type RegisterRepositoryRequest = {
@@ -14,7 +15,9 @@ export type RegisterRepositoryRequest = {
 export type HandoffPreviewRequest = {
   readonly taskId: string; readonly profileId: string; readonly repositoryId: string;
   readonly repositoryRevision: number; readonly sourceBranch: string; readonly sourceCommit: string;
-  readonly requestedValidation: string; readonly contextDigest: string; readonly recipient: HandoffRecipient;
+  readonly requestedValidation: string; readonly contextDigest?: string;
+  readonly selectedReferenceIds?: readonly string[]; readonly selectedResponseIds?: readonly string[];
+  readonly recipient: HandoffRecipient;
 };
 export type RecipientAssignmentRequest = {
   readonly workHubWorkspaceId: string; readonly targetWorkspaceId: string;
@@ -26,15 +29,18 @@ export class HandoffService {
   private readonly execution: ExecutionRepository;
   private readonly handoffs: HandoffRepository;
   private readonly work: WorkRepository;
+  private readonly results: ResultRepository;
 
   constructor(input: {
     readonly execution: ExecutionRepository;
     readonly handoffs: HandoffRepository;
     readonly work: WorkRepository;
+    readonly results: ResultRepository;
   }) {
     this.execution = input.execution;
     this.handoffs = input.handoffs;
     this.work = input.work;
+    this.results = input.results;
   }
 
   registerRepository(actor: Actor, input: RegisterRepositoryRequest) {
@@ -50,10 +56,14 @@ export class HandoffService {
     const task = this.work.getTask(actor.workspaceId, input.taskId);
     this.requireProject(actor, task.projectId);
     const profile = this.execution.getProfile(actor.workspaceId, input.profileId);
+    const selectedReferenceIds = input.selectedReferenceIds ?? [];
+    const selectedResponseIds = input.selectedResponseIds ?? [];
     const verification: VerificationEnvelope = {
       repositoryId: input.repositoryId, repositoryRevision: input.repositoryRevision,
       sourceBranch: input.sourceBranch, sourceCommit: input.sourceCommit,
-      requestedValidation: input.requestedValidation, contextDigest: input.contextDigest,
+      requestedValidation: input.requestedValidation,
+      contextDigest: this.handoffs.contextDigest({ workspaceId: actor.workspaceId, taskId: task.id,
+        selectedReferenceIds, selectedResponseIds }),
     };
     const target = input.recipient.kind === "new"
       ? { kind: "new", runtimeInstallationId: profile.runtimeInstallationId,
@@ -63,7 +73,7 @@ export class HandoffService {
       : this.attachedTarget(actor, input.recipient);
     return this.handoffs.preview({ workspaceId: actor.workspaceId, task, profile,
       repositoryId: input.repositoryId, repositoryRevision: input.repositoryRevision,
-      verification, recipient: input.recipient, target });
+      verification, recipient: input.recipient, selectedReferenceIds, selectedResponseIds, target });
   }
 
   get(actor: Actor, attemptId: string) {
@@ -72,13 +82,14 @@ export class HandoffService {
     this.requireProject(actor, task.projectId);
     const preview = this.handoffs.previewForAttempt(actor.workspaceId, attempt.id);
     if (preview === undefined) throw unsupported("handoff_unavailable", "Attempt is not a verification handoff.");
-    return { task, attempt, preview, delivery: this.handoffs.delivery(actor.workspaceId, attempt.id) };
+    return { task, attempt, preview, delivery: this.handoffs.delivery(actor.workspaceId, attempt.id),
+      results: this.results.forAttempts(actor.workspaceId, [attempt.id]) };
   }
 
-  list(actor: Actor, taskId: string) {
+  list(actor: Actor, taskId: string, limit = 50) {
     const task = this.work.getTask(actor.workspaceId, taskId);
     this.requireProject(actor, task.projectId);
-    return this.execution.attemptsForTask(actor.workspaceId, taskId)
+    return this.execution.attemptsForTask(actor.workspaceId, taskId).slice(0, Math.max(1, Math.min(limit, 100)))
       .flatMap((attempt) => this.handoffs.previewForAttempt(actor.workspaceId, attempt.id) === undefined
         ? [] : [this.get(actor, attempt.id)]);
   }
@@ -156,6 +167,9 @@ export class HandoffService {
       "handoff_target_not_ready", "Attached handoff recipients require an open control session.");
     if (session.profileId !== recipient.profileId || session.profileRevision !== recipient.profileRevision) throw unsupported(
       "handoff_profile_mismatch", "Attached handoff recipient profile identity changed.");
+    if (session.revision !== recipient.sessionRevision ||
+      session.bindingGeneration !== recipient.bindingGeneration) throw unsupported(
+        "handoff_target_stale", "Attached handoff recipient revision or generation changed.");
     if (session.activeAttemptId !== undefined &&
       this.execution.getAttempt(actor.workspaceId, session.activeAttemptId).phase !== "finished") throw unsupported(
         "handoff_target_busy", "Attached handoff recipient still has unresolved active work.");

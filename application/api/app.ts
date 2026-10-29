@@ -75,6 +75,9 @@ export function createApplication(options: ApplicationOptions) {
     return c.json(receipt, receipt.status === 'accepted' || receipt.status === 'running' ? 202 : 200);
   });
   app.get('/api/v1/tasks/:id', (c) => c.json(hub.getTask(actor(c), c.req.param('id'))));
+  app.get('/api/v1/tasks/:id/lifecycle', (c) => c.json(
+    hub.getTaskLifecycle(actor(c), c.req.param('id')),
+  ));
   app.get('/api/v1/references/:id', (c) => c.json(hub.getReference(actor(c), c.req.param('id'))));
   app.get('/api/v1/requests/:id', (c) => {
     const current = actor(c);

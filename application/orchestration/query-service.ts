@@ -17,6 +17,7 @@ import type {
 import type { EnvironmentRepository } from "../persistence/environment-repository.ts";
 import type { ExecutionRepository } from "../persistence/execution-repository.ts";
 import type { InteractionRepository } from "../persistence/interaction-repository.ts";
+import type { LifecycleRepository } from "../persistence/lifecycle-repository.ts";
 import type { OperationRepository } from "../persistence/operation-repository.ts";
 import type { QueryRepository } from "../persistence/query-repository.ts";
 import type { ResultRepository } from "../persistence/result-repository.ts";
@@ -44,25 +45,22 @@ export type ContextQuery = { readonly route: 'dashboard' | 'backlog' | 'task' | 
 export class QueryService {
   private readonly work: WorkRepository;
   private readonly interactions: InteractionRepository;
+  private readonly lifecycle: LifecycleRepository;
   private readonly execution: ExecutionRepository;
   private readonly environments: EnvironmentRepository;
   private readonly results: ResultRepository;
-  private readonly operations: OperationRepository;
-  private readonly query: QueryRepository;
+  private readonly operations: OperationRepository; private readonly query: QueryRepository;
 
   constructor(input: {
     readonly work: WorkRepository; readonly interactions: InteractionRepository;
     readonly execution: ExecutionRepository; readonly environments: EnvironmentRepository;
     readonly results: ResultRepository; readonly operations: OperationRepository;
-    readonly query: QueryRepository;
+    readonly query: QueryRepository; readonly lifecycle: LifecycleRepository;
   }) {
-    this.work = input.work;
-    this.interactions = input.interactions;
-    this.execution = input.execution;
-    this.environments = input.environments;
-    this.results = input.results;
-    this.operations = input.operations;
-    this.query = input.query;
+    this.work = input.work; this.interactions = input.interactions;
+    this.lifecycle = input.lifecycle; this.execution = input.execution;
+    this.environments = input.environments; this.results = input.results;
+    this.operations = input.operations; this.query = input.query;
   }
 
   getTask(actor: Actor, id: string): TaskView {
@@ -73,6 +71,10 @@ export class QueryService {
       if (!session || session.taskId !== id || session.bindingGeneration !== actor.bindingGeneration) throw forbidden('The task is outside the runtime credential scope.');
     }
     return task;
+  }
+
+  getTaskLifecycle(actor: Actor, id: string) {
+    this.getTask(actor, id); return this.lifecycle.view(actor.workspaceId, id);
   }
 
   listTasks(actor: Actor, input: TaskListQuery = {}): Page<TaskView> {
