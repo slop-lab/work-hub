@@ -74,6 +74,7 @@
 .lifecycle-criterion-copy {
 	word-break: keep-all;
 	overflow-wrap: break-word;
+	text-wrap: balance;
 }
 
 .lifecycle-form,
