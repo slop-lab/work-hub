@@ -15,6 +15,8 @@ export const connectionSchema = z.strictObject({
     const url = new URL(template.replace('{sessionID}', 'session'));
     return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
   }),
+  recipient: z.strictObject({ hostId: z.string().min(1), workspaceId: z.string().uuid(),
+    incarnation: z.string().min(1) }).optional(),
   environment: z.strictObject({ executionInstallationId: z.string(), hostId: z.string(),
     workspaceId: z.string(), incarnation: z.string() }).optional(),
 });
@@ -24,13 +26,19 @@ export const selectionSchema = z.strictObject({
   model: z.strictObject({ providerID: z.string().min(1), modelID: z.string().min(1) }),
   projectId: z.string().min(1),
 });
-export const sessionSchema = z.object({ id: z.string().startsWith('ses'), directory: z.string() });
+export const sessionSchema = z.object({ id: z.string().startsWith('ses'), directory: z.string(), parentID: z.string().startsWith('ses').optional() });
+export const sessionStatusSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('idle') }),
+  z.object({ type: z.literal('busy') }),
+  z.object({ type: z.literal('retry'), attempt: z.number().int().nonnegative(), message: z.string(), next: z.number().int().nonnegative() }),
+]);
 export const messageSchema = z.object({
   info: z.object({ id: z.string(), sessionID: z.string(), role: z.enum(['user', 'assistant']),
     parentID: z.string().optional(), finish: z.string().optional(), error: z.unknown().optional(),
     time: z.object({ created: z.number(), completed: z.number().optional() }),
   }),
-  parts: z.array(z.object({ id: z.string(), type: z.string(), text: z.string().optional() })),
+  parts: z.array(z.object({ id: z.string(), type: z.string(), text: z.string().optional(), tool: z.string().optional(),
+    state: z.object({ status: z.string(), output: z.string().optional() }).optional() })),
 });
 export const questionSchema = z.object({
   id: z.string(), sessionID: z.string(),
@@ -46,8 +54,12 @@ export const bindingSchema = z.object({
   environmentGrant: EnvironmentUseGrantSchema.nullable(),
   ownedInputs: z.array(z.object({ messageId: z.string(), attemptId: z.string(), executionId: z.string() })),
   attempt: z.object({ id: z.string(), taskId: z.string(), messageId: z.string(),
-    messageIds: z.array(z.string()), generation: z.number() }).optional(),
+    messageIds: z.array(z.string()), generation: z.number(), activitySessions: z.array(z.object({
+      id: z.string().startsWith('ses'), parentId: z.string().startsWith('ses'), rootMessageId: z.string(),
+    })).default([]) }).optional(),
 });
 export type Binding = z.infer<typeof bindingSchema>;
 export type NativeMessage = z.infer<typeof messageSchema>;
 export type NativeQuestion = z.infer<typeof questionSchema>;
+export type NativeSession = z.infer<typeof sessionSchema>;
+export type NativeSessionStatus = z.infer<typeof sessionStatusSchema>;

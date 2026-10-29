@@ -2,7 +2,7 @@ import ky, { HTTPError, TimeoutError } from 'ky';
 import { z } from 'zod';
 import type { CallContext } from '../../contracts/index.ts';
 import { HubError } from '../../domain/errors.ts';
-import { messageSchema, questionSchema, sessionSchema, type OpenCodeConnection } from './schema.ts';
+import { messageSchema, questionSchema, sessionSchema, sessionStatusSchema, type OpenCodeConnection } from './schema.ts';
 
 /** Only the trusted backend receives this object. Responses are projected, never proxied. */
 export class OpenCodeClient {
@@ -128,6 +128,17 @@ export class OpenCodeClient {
   }
   async messages(ctx: CallContext, id: string) {
     return z.array(messageSchema).parse(await this.request(ctx, `/session/${encodeURIComponent(id)}/message?limit=100`));
+  }
+  async statuses(ctx: CallContext) {
+    return z.record(z.string().startsWith('ses'), sessionStatusSchema).parse(await this.request(ctx, '/session/status'));
+  }
+  async children(ctx: CallContext, id: string) {
+    const children = z.array(sessionSchema).parse(await this.request(ctx, `/session/${encodeURIComponent(id)}/children`));
+    if (children.some((child) => child.parentID !== id || child.directory !== this.connection.directory)) throw new HubError({
+      code: 'opencode_child_mismatch', category: 'identity_mismatch',
+      message: 'OpenCode returned a child outside the selected native session or working directory.', retry: 'never',
+    });
+    return children;
   }
   async questions(ctx: CallContext, id: string) {
     return z.array(questionSchema).parse(await this.request(ctx, '/question')).filter((question) => question.sessionID === id);
