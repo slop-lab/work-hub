@@ -1,4 +1,10 @@
 import type { HubErrorData } from "./errors.ts";
+import type {
+  CriterionEvidenceView,
+  InterruptionKind,
+  RecoveryKind,
+  ResultKind,
+} from "./lifecycle-model.ts";
 
 export type TaskStatus = "backlog" | "active" | "review" | "done" | "canceled";
 export type AttemptPhase =
@@ -35,6 +41,7 @@ export type TaskView = {
   readonly ownerId?: string;
   readonly status: TaskStatus;
   readonly businessIntentEpoch: number;
+  readonly scopeRevision: number;
   readonly primaryAttemptId?: string;
   readonly archivedAt?: string;
   readonly createdAt: string;
@@ -100,6 +107,11 @@ export type AttemptView = {
   readonly inputSnapshot: Readonly<Record<string, unknown>>;
   readonly predecessorId?: string;
   readonly unresolved: boolean;
+  readonly interruption?: InterruptionKind;
+  readonly recovery: RecoveryKind;
+  readonly retryOrdinal: number;
+  readonly retryLimit: number;
+  readonly retryReason?: string;
   readonly stopRequestedAt?: string;
   readonly observationEndedAt?: string;
   readonly createdAt: string;
@@ -161,6 +173,8 @@ export type ResultView = {
   readonly evidence: readonly Readonly<Record<string, unknown>>[];
   readonly artifacts: readonly Readonly<Record<string, unknown>>[];
   readonly outcome: "passed" | "failed" | "partial" | "blocked" | "unspecified";
+  readonly kind: ResultKind;
+  readonly criterionEvidence: readonly CriterionEvidenceView[];
   readonly submissionKey?: string;
   readonly binding?: Readonly<Record<string, unknown>>;
   readonly createdAt: string;
