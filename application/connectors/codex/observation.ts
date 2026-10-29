@@ -1,6 +1,6 @@
 import type { CallContext, ExecutionObservation, OutputItem, OutputPage, RuntimeEvent, RuntimeSessionObservation, RuntimeTarget } from '../../contracts/index.ts';
 import { digest } from '../../persistence/codec.ts';
-import type { CodexProtocol, CodexProtocolEvent } from './protocol.ts';
+import { CodexProtocolError, type CodexProtocol, type CodexProtocolEvent } from './protocol.ts';
 import { agentMessageSchema, errorNotificationSchema, itemCompletedNotificationSchema, itemStartedNotificationSchema,
   rateLimitsUpdatedNotificationSchema, threadReadResponseSchema, threadStatusChangedNotificationSchema,
   toolRequestUserInputParamsSchema, turnNotificationSchema, unsupportedServerRequestSchema, userMessageSchema,
@@ -132,14 +132,29 @@ export class CodexObservation {
     const response = threadReadResponseSchema.parse(await this.protocol.request('thread/read', { threadId: binding.nativeId, includeTurns: true }));
     return { binding, thread: response.thread };
   }
-  async inspect(ctx: CallContext, target: RuntimeTarget): Promise<RuntimeSessionObservation> {
-    const { binding, thread } = await this.thread(ctx, target);
-    const pendingNativeRequestRefs = this.protocol.pendingServerRequests().flatMap((event) => {
+  private pending(binding: CodexBinding) {
+    return this.protocol.pendingServerRequests().flatMap((event) => {
       if (event.method !== 'item/tool/requestUserInput' || event.nativeRequestId === undefined) return [];
       const parsed = toolRequestUserInputParamsSchema.safeParse(event.params);
       return parsed.success && parsed.data.threadId === binding.nativeId && parsed.data.turnId === binding.attempt?.turnId
         ? [this.state.reference('question', event.nativeRequestId)] : [];
     });
+  }
+  async inspect(ctx: CallContext, target: RuntimeTarget): Promise<RuntimeSessionObservation> {
+    const binding = this.state.target(ctx, target);
+    const pendingNativeRequestRefs = this.pending(binding);
+    let thread: CodexThread;
+    try { thread = (await this.thread(ctx, target)).thread; }
+    catch (error) {
+      if (!(error instanceof CodexProtocolError) || error.code !== -32601) throw error;
+      const phase = pendingNativeRequestRefs.length > 0 ? 'waiting_input' as const : 'unknown' as const;
+      return { nativeSession: target.nativeSession, exists: true,
+        execution: { ...(binding.attempt === undefined ? {} : { hubAttemptId: binding.attempt.id }), phase,
+          pendingNativeRequestRefs }, controlGrantValid: !binding.detached, limitations: [...LIMITATIONS,
+          'Codex thread state is temporarily unavailable while the active turn owns app-server input.'],
+        activity: { coverage: 'unknown', truncated: false,
+          nodes: [{ nativeSession: target.nativeSession, relation: 'root', phase }] } };
+    }
     const currentExecution = execution(this.state, binding, thread);
     const observedExecution = pendingNativeRequestRefs.length === 0 ? currentExecution : {
       ...currentExecution, phase: 'waiting_input' as const, pendingNativeRequestRefs,
@@ -151,7 +166,14 @@ export class CodexObservation {
         nodes: [{ nativeSession: target.nativeSession, relation: 'root', phase: activityPhase }] } };
   }
   async output(ctx: CallContext, input: { readonly target: RuntimeTarget; readonly after?: string; readonly limit: number }): Promise<OutputPage> {
-    const { binding, thread } = await this.thread(ctx, input.target);
+    let value: { readonly binding: CodexBinding; readonly thread: CodexThread };
+    try { value = await this.thread(ctx, input.target); }
+    catch (error) {
+      if (!(error instanceof CodexProtocolError) || error.code !== -32601) throw error;
+      return { items: [], coverage: 'partial', gaps: [{ reason:
+        'Codex output is temporarily unavailable while the active turn owns app-server input.' }] };
+    }
+    const { binding, thread } = value;
     const owned = new Map(binding.ownedInputs.map((item) => [item.turnId, item]));
     const items: OutputItem[] = [];
     for (const turn of thread.turns) {
@@ -176,22 +198,13 @@ export class CodexObservation {
       gaps: [{ reason: LIMITATIONS[1] }, ...(input.after !== undefined && offset === 0 ? [{ reason: 'Saved cursor is outside available Hub-owned output.' }] : [])] };
   }
   async *events(ctx: CallContext, target: RuntimeTarget): AsyncIterable<RuntimeEvent> {
-    const { binding, thread } = await this.thread(ctx, target);
+    const binding = this.state.target(ctx, target);
     const attempt = binding.attempt;
     if (!attempt) return;
-    const turn = thread.turns.find((candidate) => candidate.id === attempt.turnId);
-    if (turn?.status === 'completed') {
-      const summary = turn.items.flatMap((item) => {
-        const parsed = agentMessageSchema.safeParse(item);
-        return parsed.success && parsed.data.phase === 'final_answer' ? [parsed.data.text] : [];
-      }).join('\n').slice(0, 64 * 1024);
-      if (summary) yield { sourceEventId: `result:${turn.id}:${digest(summary)}`, streamScope: target.hubSessionId,
-        nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration, observedAt: new Date().toISOString(),
-        payload: { type: 'result.submitted', attemptId: attempt.id, summary, referenceIds: [] } };
-    }
+    let pendingQuestion = false;
     for (const event of this.protocol.drainEvents()) {
       const question = nativeQuestion(this.state, binding, target, event);
-      if (question !== undefined) { yield question; continue; }
+      if (question !== undefined) { pendingQuestion = true; yield question; continue; }
       if (event.method === 'workhub/serverRequestUnsupported') {
         const unsupported = unsupportedServerRequestSchema.safeParse(event.params);
         if (unsupported.success && (unsupported.data.threadId === undefined || unsupported.data.threadId === binding.nativeId)) {
@@ -204,5 +217,25 @@ export class CodexObservation {
       const mapped = lifecycleExtension(target, event);
       if (mapped !== undefined) yield mapped;
     }
+    if (pendingQuestion) return;
+    let thread: CodexThread;
+    try { thread = (await this.thread(ctx, target)).thread; }
+    catch (error) {
+      if (!(error instanceof CodexProtocolError) || error.code !== -32601) throw error;
+      yield { sourceEventId: `gap:thread-read:${attempt.turnId}`, streamScope: target.hubSessionId,
+        nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration,
+        observedAt: new Date().toISOString(), payload: { type: 'gap',
+          reason: 'Codex thread state is temporarily unavailable while the active turn owns app-server input.' } };
+      return;
+    }
+    const turn = thread.turns.find((candidate) => candidate.id === attempt.turnId);
+    if (turn?.status !== 'completed') return;
+    const summary = turn.items.flatMap((item) => {
+      const parsed = agentMessageSchema.safeParse(item);
+      return parsed.success && parsed.data.phase === 'final_answer' ? [parsed.data.text] : [];
+    }).join('\n').slice(0, 64 * 1024);
+    if (summary) yield { sourceEventId: `result:${turn.id}:${digest(summary)}`, streamScope: target.hubSessionId,
+      nativeSession: target.nativeSession, bindingGeneration: target.bindingGeneration, observedAt: new Date().toISOString(),
+      payload: { type: 'result.submitted', attemptId: attempt.id, summary, referenceIds: [] } };
   }
 }

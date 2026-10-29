@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { CodexProtocolError } from '../../application/connectors/codex/protocol.ts';
 import { codexContext, codexFixture } from '../codex-fixture.ts';
 
 test('completed affiliated Codex turn reports output and result but never task completion', async () => {
@@ -77,9 +78,18 @@ test('Codex maps one non-secret native question and delivers its exact JSON-RPC 
         isSecret: false, options: [{ label: 'Alpha', description: 'First' }, { label: 'Beta', description: 'Second' }] }],
       isBlocking: true, autoResolutionMs: null };
     fixture.protocol.queueServerRequest({ method: 'item/tool/requestUserInput', params, nativeRequestId: 'native-question' });
+    const request = fixture.protocol.request.bind(fixture.protocol);
+    fixture.protocol.request = async (method, value) => {
+      if (method === 'thread/read') throw new CodexProtocolError(-32601, method);
+      return request(method, value);
+    };
     const waiting = await fixture.connector.inspectSession(codexContext('waiting'), fixture.target);
     assert.equal(waiting.value.execution.phase, 'waiting_input');
     assert.equal(waiting.value.execution.pendingNativeRequestRefs[0]?.id, 'native-question');
+    const unavailableOutput = await fixture.connector.readOutput(codexContext('blocked-output'), {
+      target: fixture.target, limit: 10 });
+    assert.equal(unavailableOutput.items.length, 0);
+    assert.match(unavailableOutput.gaps[0]?.reason ?? '', /temporarily unavailable/);
     const events = [];
     for await (const event of fixture.connector.subscribe(codexContext('questions'), { target: fixture.target })) events.push(event);
     const created = events.find((event) => event.payload.type === 'request.created');
