@@ -19,6 +19,7 @@ test('normal delegation persists one versioned task brief with exact attempt cri
 
     assert.deepEqual(envelope.template, { id: 'task_brief', version: 1 });
     assert.equal(envelope.input['attemptId'], attempt.id);
+    assert.equal(envelope.input['instruction'], 'Acceptance prompt-core-delivery\n\nDescription prompt-core-delivery');
     assert.equal(z.object({ id: z.string() }).parse(envelope.input['task']).id, taskId);
     assert.equal(z.object({ environment: z.object({ mode: z.string() }) }).parse(envelope.input['execution']).environment.mode, 'none');
     assert.equal(z.array(z.unknown()).parse(envelope.input['criteria']).length, 1);

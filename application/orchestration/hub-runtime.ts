@@ -55,7 +55,7 @@ export function createHubRuntime(path: string, store: Store, options: HubRuntime
   const observation = new ObservationRepository(store.database, store.clock);
   const state = new StateRepository(store.database, store.clock);
   const query = new QueryRepository(store.database);
-  const attempts = new AttemptFactory(store.database, store.clock, execution);
+  const attempts = new AttemptFactory(store.database, store.clock, execution, lifecycle);
   const attachedHandoffs = new AttachedHandoffFactory({ database: store.database,
     clock: store.clock, execution, handoffs });
   const useSimulator = options.mode !== "external";

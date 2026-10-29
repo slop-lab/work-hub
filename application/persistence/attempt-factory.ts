@@ -9,19 +9,24 @@ import type {
   TaskView,
 } from "../domain/model.ts";
 import { assembleContext } from "../artifacts/snapshot-context.ts";
+import { renderPrompt } from "../prompts/index.ts";
 import type { Clock } from "./codec.ts";
 import { digest, newId } from "./codec.ts";
 import type { ExecutionRepository } from "./execution-repository.ts";
+import type { LifecycleRepository } from "./lifecycle-repository.ts";
 
 export class AttemptFactory {
   private readonly database: DatabaseSync;
   private readonly clock: Clock;
   private readonly execution: ExecutionRepository;
+  private readonly lifecycle: LifecycleRepository;
 
-  constructor(database: DatabaseSync, clock: Clock, execution: ExecutionRepository) {
+  constructor(database: DatabaseSync, clock: Clock, execution: ExecutionRepository,
+    lifecycle: LifecycleRepository) {
     this.database = database;
     this.clock = clock;
     this.execution = execution;
+    this.lifecycle = lifecycle;
   }
 
   createAttachedSession(input: {
@@ -47,6 +52,7 @@ export class AttemptFactory {
     readonly profile: ExecutionProfileView; readonly instruction: string;
     readonly predecessor: AttemptView; readonly context: "snapshot" | "current_task";
     readonly sourceResult?: ResultView;
+    readonly environment?: unknown;
   }): string {
     const id = newId("attempt");
     const now = this.clock.now().toISOString();
@@ -72,6 +78,9 @@ export class AttemptFactory {
         limitations: input.sourceResult.limitations,
       }),
     }];
+    const contextItems = [...priorContext, ...resultContext];
+    const rendered = this.renderTaskBrief({ task: input.task, profile: input.profile, attemptId: id,
+      instruction: input.instruction, contextItems, environment: input.environment ?? { mode: "session_reuse" } });
     const snapshotBase = {
       id: newId("snapshot"), taskId: input.task.id,
       scopeRevision: input.task.scopeRevision,
@@ -80,12 +89,13 @@ export class AttemptFactory {
       profileId: input.profile.id,
       profileRevision: input.sourceResult === undefined && previous !== undefined
         ? previous.profileRevision : input.profile.revision,
-      instruction: input.instruction, selectedReferenceIds, selectedResponseIds,
-      contextItems: [...priorContext, ...resultContext],
+      instruction: rendered.text, selectedReferenceIds, selectedResponseIds,
+      contextItems,
       authorizedEffectKinds: input.sourceResult === undefined && previous !== undefined
         ? previous.authorizedEffectKinds.filter((effect) => input.profile.allowedEffects.includes(effect))
         : input.profile.allowedEffects,
-      assembledAt: now,
+      assembledAt: now, promptDigest: rendered.digest,
+      promptTemplate: { id: rendered.templateId, version: rendered.version, inputDigest: rendered.inputDigest },
     };
     const snapshot = { ...snapshotBase, digest: digest(snapshotBase) };
     this.database.prepare(`INSERT INTO attempts
@@ -109,6 +119,7 @@ export class AttemptFactory {
     readonly profile: ExecutionProfileView;
     readonly predecessor: AttemptView;
     readonly context: "snapshot" | "current_task";
+    readonly environment?: unknown;
   }): { readonly session: SessionView; readonly attempt: AttemptView } {
     const sessionId = newId("session");
     const attemptId = newId("attempt");
@@ -128,6 +139,9 @@ export class AttemptFactory {
     const authorizedEffectKinds = snapshotSelection
       ? previous.authorizedEffectKinds.filter((effect) => input.profile.allowedEffects.includes(effect))
       : input.profile.allowedEffects;
+    const rendered = snapshotSelection ? undefined : this.renderTaskBrief({ task: input.task,
+      profile: input.profile, attemptId, instruction: `${input.task.title}\n\n${input.task.description}`.trim(),
+      contextItems, environment: input.environment ?? { mode: "unspecified" } });
     const snapshotBase = {
       id: newId("snapshot"),
       taskId: input.task.id,
@@ -135,14 +149,17 @@ export class AttemptFactory {
       taskRevision: snapshotSelection ? previous.taskRevision : input.task.revision,
       profileId: input.profile.id,
       profileRevision: snapshotSelection ? previous.profileRevision : input.profile.revision,
-      instruction: snapshotSelection
-        ? previous.instruction
-        : `${input.task.title}\n\n${input.task.description}`.trim(),
+      instruction: rendered?.text ?? previous.instruction,
       selectedReferenceIds,
       selectedResponseIds,
       contextItems,
       authorizedEffectKinds,
       assembledAt: now,
+      ...(rendered === undefined ? {
+        ...(previous.promptDigest === undefined ? {} : { promptDigest: previous.promptDigest }),
+        ...(previous.promptTemplate === undefined ? {} : { promptTemplate: previous.promptTemplate }),
+      } : { promptDigest: rendered.digest,
+        promptTemplate: { id: rendered.templateId, version: rendered.version, inputDigest: rendered.inputDigest } }),
     };
     const snapshot = { ...snapshotBase, digest: digest(snapshotBase) };
     this.database.prepare(`INSERT INTO sessions
@@ -169,6 +186,22 @@ export class AttemptFactory {
       session: this.execution.getSession(input.workspaceId, sessionId),
       attempt: this.execution.getAttempt(input.workspaceId, attemptId),
     };
+  }
+
+  private renderTaskBrief(input: { readonly task: TaskView; readonly profile: ExecutionProfileView;
+    readonly attemptId: string; readonly instruction: string;
+    readonly contextItems: readonly { readonly sourceId: string; readonly includedText?: string | undefined;
+      readonly omissionReason?: string | undefined }[]; readonly environment: unknown }) {
+    const lifecycle = this.lifecycle.view(input.task.workspaceId, input.task.id);
+    return renderPrompt("task_brief", { task: { id: input.task.id, revision: input.task.revision,
+      scopeRevision: input.task.scopeRevision, title: input.task.title, description: input.task.description,
+      ...(input.task.expectedOutcome === undefined ? {} : { expectedOutcome: input.task.expectedOutcome }) },
+      attemptId: input.attemptId, instruction: input.instruction,
+      execution: { profileId: input.profile.id, profileRevision: input.profile.revision,
+        runtimeInstallationId: input.profile.runtimeInstallationId, environment: input.environment },
+      amendments: lifecycle.amendments, criteria: lifecycle.criteria,
+      context: input.contextItems.map((item) => ({ id: item.sourceId,
+        text: item.includedText ?? item.omissionReason ?? "Context unavailable." })) });
   }
 
   createObservedAttempt(input: {
