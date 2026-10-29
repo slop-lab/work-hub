@@ -56,8 +56,14 @@ function amendmentForm(ctx: UiContext, task: HubTask, criteria: TaskLifecycle["c
 }
 
 function acceptanceForm(ctx: UiContext, task: HubTask, lifecycle: TaskLifecycle): HTMLElement {
-	const currentResult = ctx.state.results.find((result) => result.taskId === task.id && result.attemptId === task.primaryAttemptId);
+	const currentResult = task.status === "backlog" || task.status === "canceled"
+		? undefined
+		: lifecycle.acceptance?.decision === "accepted"
+			? ctx.state.results.find((result) => result.id === lifecycle.acceptance?.resultId)
+			: ctx.state.results.find((result) => result.taskId === task.id && result.attemptId === task.primaryAttemptId);
+	const currentAttempt = ctx.state.attempts.find((attempt) => attempt.id === task.primaryAttemptId);
 	const decision = select("decision", [["accepted", "Accept current final result"], ["incomplete", "Mark incomplete"], ["rejected", "Reject result"]]);
+	const activeDecision = select("activeExecutionDecision", [["", "Choose stop or continue"], ["request_stop", "Request stop"], ["allow_to_continue", "Allow work to continue"]]);
 	const accepted = decision.options.item(0);
 	if (accepted !== null && lifecycle.projection.criterionCoverage.missing.length > 0) {
 		accepted.disabled = true;
@@ -79,6 +85,7 @@ function acceptanceForm(ctx: UiContext, task: HubTask, lifecycle: TaskLifecycle)
 		),
 		lifecycle.projection.criterionCoverage.missing.length === 0 ? el("p", { class: "muted" }, "No required criteria are missing from the current result.") : el("div", { class: "boundary-note" }, el("strong", {}, "Computed result gaps"), el("ul", { class: "plain-list" }, ...lifecycle.projection.criterionCoverage.missing.map((id) => el("li", {}, lifecycle.criteria.find((criterion) => criterion.id === id)?.key ?? id)))),
 		label("Acceptance decision", decision),
+		currentAttempt?.unresolved === true ? label("Active execution decision", activeDecision) : null,
 		label("Decision note", note),
 		submit,
 	);
@@ -86,10 +93,21 @@ function acceptanceForm(ctx: UiContext, task: HubTask, lifecycle: TaskLifecycle)
 		event.preventDefault();
 		if (currentResult?.kind !== "final") return;
 		const selected = decision.value;
+		const activeExecutionDecision = selected === "accepted" && currentAttempt?.unresolved === true
+			? executionDecision(activeDecision.value) : undefined;
+		if (selected === "accepted" && currentAttempt?.unresolved === true && activeExecutionDecision === undefined) {
+			ctx.notice("Choose whether active work should stop or continue before accepting the result.", "error");
+			return;
+		}
 		const missingCriteria = selected === "accepted" ? [] : lifecycle.projection.criterionCoverage.missing;
-		void ctx.command({ commandId: commandId(), type: "task.acceptResult", target: { kind: "task", id: task.id }, expected: { task: task.revision }, payload: { resultId: currentResult.id, decision: selected, missingCriteria, note: findFormValue(form, "note") || undefined } }, selected === "accepted" ? "Current final result accepted." : "Result decision recorded with current gaps.");
+		void ctx.command({ commandId: commandId(), type: "task.acceptResult", target: { kind: "task", id: task.id }, expected: { task: task.revision }, payload: { resultId: currentResult.id, decision: selected, missingCriteria, note: findFormValue(form, "note") || undefined, ...(activeExecutionDecision === undefined ? {} : { activeExecutionDecision }) } }, selected === "accepted" ? "Current final result accepted." : "Result decision recorded with current gaps.");
 	});
 	return form;
+}
+
+function executionDecision(value: string): "request_stop" | "allow_to_continue" | undefined {
+	if (value === "request_stop" || value === "allow_to_continue") return value;
+	return undefined;
 }
 
 function select(name: string, options: readonly (readonly [string, string])[]): HTMLSelectElement {

@@ -180,10 +180,11 @@ test("Given a fresh preview, when handoff result and follow-up are reviewed, the
 
 		const lifecycleDecision = page.getByRole("region", { name: "Reliable lifecycle" });
 		await lifecycleDecision.getByLabel("Acceptance decision").selectOption("accepted");
+		await lifecycleDecision.getByLabel("Active execution decision").selectOption("allow_to_continue");
 		await lifecycleDecision.getByLabel("Decision note").fill("Human accepted the partial verification with recorded limitation");
 		for (const width of [375, 768, 1280] as const) {
 			await page.setViewportSize({ width, height: 900 });
-			await lifecycleDecision.screenshot({ path: `.omo/evidence/handoff/human-acceptance-${width}.png` });
+			await capture(lifecycleDecision, `.omo/evidence/handoff/human-acceptance-${width}.png`);
 		}
 		await lifecycleDecision.getByRole("button", { name: "Record acceptance decision" }).click();
 		await expect(lifecycleDecision).toContainText("No lifecycle action is pending.");
