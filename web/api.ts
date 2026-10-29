@@ -115,7 +115,12 @@ const handoffRecipientSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("attached"), sessionId: z.string().min(1), sessionRevision: z.number().int().positive(), bindingGeneration: z.number().int().positive(), profileId: z.string().min(1), profileRevision: z.number().int().positive() }),
 ]);
 const verificationEnvelopeSchema = z.object({ repositoryId: z.string().min(1), repositoryRevision: z.number().int().positive(), sourceBranch: z.string().min(1), sourceCommit: z.string().min(1), requestedValidation: z.string().min(1), contextDigest: z.string().min(1) });
-const handoffPreviewSchema = z.object({ previewDigest: z.string().min(1), promptDigest: z.string().min(1), prompt: z.string().min(1), taskId: z.string().min(1), taskRevision: z.number().int().positive(), profileId: z.string().min(1), profileRevision: z.number().int().positive(), repository: projectRepositorySchema, verification: verificationEnvelopeSchema, recipient: handoffRecipientSchema });
+const handoffTargetSchema = z.object({ kind: z.enum(["new", "attached"]), runtimeInstallationId: z.string().min(1),
+	profileId: z.string().min(1), profileRevision: z.number().int().positive(), readiness: z.enum(["pending_session_creation", "ready"]),
+	authority: z.literal("control"), incarnation: z.string().min(1), sessionId: z.string().min(1).optional(),
+	sessionRevision: z.number().int().positive().optional(), bindingGeneration: z.number().int().positive().optional(),
+	nativeSessionDigest: z.string().min(1).optional() });
+const handoffPreviewSchema = z.object({ previewDigest: z.string().min(1), promptDigest: z.string().min(1), prompt: z.string().min(1), taskId: z.string().min(1), taskRevision: z.number().int().positive(), profileId: z.string().min(1), profileRevision: z.number().int().positive(), repository: projectRepositorySchema, verification: verificationEnvelopeSchema, recipient: handoffRecipientSchema, target: handoffTargetSchema });
 const handoffDetailSchema = z.object({
 	task: z.object({ id: z.string().min(1), revision: z.number().int(), title: z.string() }),
 	attempt: z.object({ id: z.string().min(1), taskId: z.string().min(1), sessionId: z.string().min(1), phase: z.string(), observation: z.string(), inputSnapshot: z.record(z.string(), z.unknown()) }),

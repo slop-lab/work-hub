@@ -23,6 +23,7 @@ export const resultSchema = z.object({
 	summary: z.string(),
 	limitations: z.array(z.string()),
 	referenceIds: z.array(id),
+	artifacts: z.array(z.object({ repositoryId: id, sourceCommit: z.string(), path: z.string(), digest: z.string().optional() })).default([]),
 	submittedAt: timestamp,
 });
 export const environmentSchema = z.object({

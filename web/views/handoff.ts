@@ -1,4 +1,4 @@
-import { type HandoffDetail, type HandoffRecipient, loadHandoff } from "../api.ts";
+import { type HandoffDetail, loadHandoff } from "../api.ts";
 import { badge, el, formatTime } from "../dom.ts";
 import type { HubAttempt, HubTask } from "../state-schema.ts";
 import type { UiContext } from "../ui-context.ts";
@@ -13,7 +13,7 @@ export function handoffView(ctx: UiContext, taskId: string, attemptId: string): 
 	const results = ctx.state.results.filter((item) => item.attemptId === attempt.id);
 	const source = sourceSection(attempt);
 	const delivery = deliverySection();
-	const recipient = recipientSection(attempt, session?.runtimeLabel, session?.bindingGeneration, session?.controlMode);
+	const recipient = recipientSection(attempt, session?.runtimeLabel);
 	const deliveryStep = lifecycleStep("Delivery", "Loading", "info");
 	const page = el(
 		"div",
@@ -51,7 +51,7 @@ export function handoffView(ctx: UiContext, taskId: string, attemptId: string): 
 		source.replaceWith(sourceSection(attempt, detail));
 		delivery.replaceWith(deliverySection(detail));
 		deliveryStep.replaceWith(lifecycleStep("Delivery", detail.delivery.status, deliveryTone(detail.delivery.status)));
-		recipient.replaceWith(recipientSection(attempt, session?.runtimeLabel, session?.bindingGeneration, session?.controlMode, detail.preview.recipient));
+		recipient.replaceWith(recipientSection(attempt, session?.runtimeLabel, detail.preview.target));
 	}).catch((error: unknown) => {
 		if (!page.isConnected) return;
 		delivery.replaceWith(el("section", { class: "detail-section detail-section--caution", role: "alert", "aria-label": "Delivery status" }, el("h2", {}, "Handoff record unavailable"), el("p", {}, error instanceof Error ? error.message : "The persisted handoff could not be loaded.")));
@@ -107,7 +107,7 @@ function activitySection(attempt: HubAttempt): HTMLElement {
 	);
 }
 
-function recipientSection(attempt: HubAttempt, runtimeLabel?: string, generation?: number, controlMode?: string, target?: HandoffRecipient): HTMLElement {
+function recipientSection(attempt: HubAttempt, runtimeLabel?: string, target?: HandoffDetail["preview"]["target"]): HTMLElement {
 	const attached = target?.kind === "attached" ? target : undefined;
 	return el(
 		"section",
@@ -115,11 +115,11 @@ function recipientSection(attempt: HubAttempt, runtimeLabel?: string, generation
 		el("h2", {}, "Recipient"),
 		facts([
 			["Runtime", runtimeLabel ?? "Unavailable"],
-			["Target", target?.kind === "new" ? "New session" : "Existing session"],
+			["Target", target === undefined ? "Loading" : target.kind === "new" ? "New session" : "Existing session"],
 			["Session", attached?.sessionId ?? attempt.sessionId],
-			["Incarnation", attached === undefined ? (generation === undefined ? "Unavailable" : String(generation)) : `binding ${attached.bindingGeneration}`],
-			["Authority", controlMode ?? "Unavailable"],
-			["Readiness", attached === undefined ? "Created for this handoff" : "Validated at preview"],
+			["Incarnation", target?.incarnation ?? "Loading"],
+			["Authority", target?.authority ?? "Loading"],
+			["Readiness", target?.readiness ?? "Loading"],
 		]),
 		el("a", { class: "button button--secondary", href: `#/session/${attempt.sessionId}` }, "Open recipient session"),
 	);

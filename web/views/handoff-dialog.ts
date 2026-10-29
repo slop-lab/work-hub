@@ -74,7 +74,9 @@ export function prepareHandoffDialog(ctx: UiContext, task: HubTask): void {
 			preview = await previewHandoff({ taskId: task.id, profileId: selectedProfile.id, repositoryId: registered.id, repositoryRevision: registered.revision, sourceBranch: branch.value, sourceCommit: commit.value, requestedValidation: validation.value, contextDigest: contextDigest.value, recipient: selectedRecipient });
 			previewRegion.replaceChildren(
 				el("div", { class: "section-heading" }, el("h2", {}, "Exact canonical prompt"), badge("Ready", "success")),
-				facts([["Repository", preview.repository.canonicalIdentity], ["Branch", preview.verification.sourceBranch], ["Full commit", preview.verification.sourceCommit], ["Target", preview.recipient.kind === "new" ? "New session" : preview.recipient.sessionId], ["Prompt digest", preview.promptDigest], ["Preview digest", preview.previewDigest]]),
+				facts([["Repository", preview.repository.canonicalIdentity], ["Branch", preview.verification.sourceBranch], ["Full commit", preview.verification.sourceCommit], ["Target", preview.target.kind === "new" ? "New session" : preview.target.sessionId ?? "Unavailable"],
+					["Readiness", preview.target.readiness], ["Authority", preview.target.authority], ["Incarnation", preview.target.incarnation],
+					["Prompt digest", preview.promptDigest], ["Preview digest", preview.previewDigest]]),
 				el("pre", { class: "handoff-context", "data-prompt-digest": preview.promptDigest }, preview.prompt),
 			);
 			previewRegion.hidden = false;

@@ -29,7 +29,7 @@ export function resultSection(ctx: UiContext, task: HubTask, results: UiContext[
 			revise.disabled = true;
 			revise.title = target.reason;
 		}
-		const actions = el("div", { class: "cluster" }, revise);
+		const actions = el("div", { class: "cluster", role: "group", "aria-label": "Result actions" }, revise);
 		if (retryTarget.kind === "available") actions.append(button("Retry in new session", "secondary", () => retryDialog(ctx, task, retryTarget)));
 		actions.append(button("Complete task", "primary", () => completionDialog(ctx, task, result)));
 		section.append(
@@ -38,7 +38,7 @@ export function resultSection(ctx: UiContext, task: HubTask, results: UiContext[
 				{ class: "result-card" },
 				el("div", { class: "section-heading" }, el("p", { class: "result-summary" }, result.summary), result.outcome === undefined ? null : el("span", { class: `badge badge--${result.outcome === "passed" ? "success" : result.outcome === "failed" || result.outcome === "blocked" ? "error" : "warning"}` }, result.outcome)),
 				resultProvenance(ctx, result),
-				result.limitations.length === 0 ? null : el("div", { class: "boundary-note" }, el("strong", {}, "Known limitations"), el("p", {}, result.limitations.join(" "))),
+				result.limitations.length === 0 ? null : el("div", { class: "boundary-note", "aria-label": "Result limitations" }, el("strong", {}, "Known limitations"), el("p", {}, result.limitations.join(" "))),
 				target.kind === "unavailable" ? el("p", { class: "muted" }, target.reason) : null,
 				retryTarget.kind === "unavailable" && target.kind !== "unavailable" ? el("p", { class: "muted" }, retryTarget.reason) : null,
 				actions,
@@ -53,7 +53,7 @@ function resultProvenance(ctx: UiContext, result: HubResult): HTMLElement {
 	const binding = attempt === undefined ? undefined : ctx.state.environmentBindings.find((item) => item.sessionId === attempt.sessionId);
 	const author = ctx.state.users.find((user) => user.id === result.authorId)?.displayName ?? result.authorId;
 	const evidenceLabels = { agent_claim: 'Agent claim', runtime_observation: 'Runtime observation', external_check: 'External check', human_assertion: 'Human assertion' } as const;
-	const provenance = el('div', { class: 'stack' },
+	const provenance = el('div', { class: 'stack', "aria-label": "Result provenance" },
 		el('p', { class: 'muted' }, `Submitted by ${author} · ${result.submittedAt}`),
 		el('p', { class: 'mono' }, `Attempt ${result.attemptId} · Session ${attempt?.sessionId ?? 'Unavailable'}`),
 		result.outcome === undefined ? null : el('dl', { class: 'definition-list result-verification' },
@@ -73,6 +73,12 @@ function resultProvenance(ctx: UiContext, result: HubResult): HTMLElement {
 		const reference = ctx.state.references.find((item) => item.id === id);
 		provenance.append(el('p', {}, reference === undefined ? `${id} · unavailable` : `${reference.title} · ${reference.availability}`));
 	}
+	if (result.artifacts.length > 0) provenance.append(el('strong', {}, 'Exact artifacts'));
+	for (const artifact of result.artifacts) provenance.append(el('dl', { class: 'definition-list result-artifact' },
+		el('dt', {}, 'Path'), el('dd', { class: 'mono' }, artifact.path),
+		el('dt', {}, 'Repository'), el('dd', { class: 'mono' }, artifact.repositoryId),
+		el('dt', {}, 'Source commit'), el('dd', { class: 'mono' }, artifact.sourceCommit),
+		el('dt', {}, 'Artifact digest'), el('dd', { class: 'mono' }, artifact.digest ?? 'Not supplied')));
 	return provenance;
 }
 
