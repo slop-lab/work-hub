@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { AttemptView, ResultView } from "../application/domain/model.ts";
 import type { Hub } from "../application/orchestration/hub.ts";
+import { PromptEnvelopeSchema } from "../application/prompts/index.ts";
 import {
   admin,
   createTask,
@@ -105,7 +106,12 @@ test("revision continuation starts one new attempt with result provenance in the
     assert.ok(next);
     assert.notEqual(next.id, first.id);
     assert.equal(next.sessionId, first.sessionId);
-    assert.equal(next.inputSnapshot["instruction"], "Continue from the reviewed result");
+    const instruction = next.inputSnapshot["instruction"];
+    if (typeof instruction !== "string") throw new TypeError("Continuation prompt missing");
+    const prompt = PromptEnvelopeSchema.parse(JSON.parse(instruction));
+    assert.equal(prompt.template.id, "task_brief");
+    assert.equal(prompt.input["attemptId"], next.id);
+    assert.equal(prompt.input["instruction"], "Continue from the reviewed result");
     const contextItems = next.inputSnapshot["contextItems"];
     assert.ok(Array.isArray(contextItems));
     const source = contextItems.find((item) => typeof item === "object" && item !== null && Reflect.get(item, "sourceId") === result.id);

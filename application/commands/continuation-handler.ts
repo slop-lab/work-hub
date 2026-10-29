@@ -83,6 +83,7 @@ export class ContinuationHandler {
       instruction: command.payload.instruction,
       predecessor,
       context: command.payload.context,
+      environment: { mode: "session_reuse", workAreas },
       ...(sourceResult === undefined ? {} : { sourceResult }),
     });
     const continued = this.dependencies.execution.getAttempt(actor.workspaceId, attemptId);
@@ -178,6 +179,7 @@ export class ContinuationHandler {
       profile,
       predecessor,
       context: command.payload.input,
+      environment: selectedEnvironment,
     });
     this.dependencies.handoffs.preserveLineage({ workspaceId: actor.workspaceId,
       sourceAttempt: predecessor, attempt: created.attempt, task });
