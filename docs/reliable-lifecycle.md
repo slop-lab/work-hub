@@ -35,9 +35,15 @@ Lifecycle authority remains in schemas and services; prose keywords are never st
 transitions.
 
 Initial task briefs include exact task/scope revision, attempt, profile/runtime,
-requested environment, retained context and criteria. Continuation templates carry
-the accepted answer, retained completed work and pending criteria. Provider adapters
-deliver the rendered text unchanged.
+requested environment, retained context and criteria. Work Hub automatically renders
+and delivers `task_brief` and `verifier_handoff`. The other templates are maintained,
+inspectable contracts for permitted agent integrations and explicit prompt-based
+fallbacks; structured request, response, result and acceptance records remain the
+production authority and are not duplicated by an automatic prose send. In
+particular, native provider questions resume through their exact native response
+route. A prompt-based answer continuation, when explicitly selected by an
+integration, carries the accepted answer, retained completed work and pending
+criteria, and provider adapters deliver that rendered text unchanged.
 
 ## Provider capability matrix
 
