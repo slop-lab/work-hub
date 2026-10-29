@@ -60,6 +60,9 @@ export class ContinuationHandler {
     const task = this.dependencies.work.getTask(actor.workspaceId, session.taskId);
     authorizeTask(actor, task);
     requireRevision(task.revision, command.expected?.task, "Task");
+    if (task.primaryAttemptId !== predecessor.id) {
+      throw conflict("continuation_target_obsolete", "Continuation requires the task's current attempt.");
+    }
     if (task.archivedAt !== undefined || task.status === "done" || task.status === "canceled") {
       throw conflict("task_not_delegable", "Reopen an unarchived task before continuing work.");
     }
@@ -113,6 +116,12 @@ export class ContinuationHandler {
     const task = this.dependencies.work.getTask(actor.workspaceId, predecessor.taskId);
     authorizeTask(actor, task);
     requireRevision(task.revision, command.expected?.task, "Task");
+    if (task.primaryAttemptId !== predecessor.id) {
+      throw conflict("retry_target_obsolete", "Retry requires the task's current attempt.");
+    }
+    if (predecessor.retryOrdinal > 0 && command.payload.retryLimit !== predecessor.retryLimit) {
+      throw conflict("retry_budget_fixed", "The retained retry budget cannot be changed after retry work starts.");
+    }
     if (task.archivedAt !== undefined || task.status === "done" || task.status === "canceled") {
       throw conflict("task_not_delegable", "Reopen an unarchived task before retrying work.");
     }
@@ -186,6 +195,7 @@ export class ContinuationHandler {
     this.dependencies.lifecycle.recordRetry({ workspaceId: actor.workspaceId,
       attemptId: created.attempt.id, predecessorOrdinal: predecessor.retryOrdinal,
       limit: command.payload.retryLimit, reason: command.payload.reason });
+    const retryAttempt = this.dependencies.execution.getAttempt(actor.workspaceId, created.attempt.id);
     const retryEnvironment = prepareRetryEnvironment({ actor, task, profile,
       ...(command.payload.environment === undefined ? {} : { requested: command.payload.environment }),
       ...(command.expected?.registration === undefined ? {} : {
@@ -210,9 +220,9 @@ export class ContinuationHandler {
         profileRevision: profile.revision,
         environment: retryEnvironment.environment,
         ...(retryEnvironment.bindingId === undefined ? {} : { bindingId: retryEnvironment.bindingId }),
-        inputSnapshot: created.attempt.inputSnapshot,
+        inputSnapshot: retryAttempt.inputSnapshot,
       },
-      inputDigest: digest(created.attempt.inputSnapshot),
+      inputDigest: digest(retryAttempt.inputSnapshot),
     });
     return this.accepted(created.attempt.id, operationId);
   }
