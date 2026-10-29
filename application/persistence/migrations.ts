@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   revision INTEGER NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
   expected_outcome TEXT, priority INTEGER, owner_id TEXT,
   status TEXT NOT NULL, business_intent_epoch INTEGER NOT NULL DEFAULT 0,
+  scope_revision INTEGER NOT NULL DEFAULT 0,
   primary_attempt_id TEXT, archived_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tasks_filter_idx
@@ -39,6 +40,20 @@ CREATE TABLE IF NOT EXISTS task_entries (
   author_id TEXT NOT NULL, entry_type TEXT NOT NULL, body_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_amendments (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  revision INTEGER NOT NULL, author_id TEXT NOT NULL, summary TEXT NOT NULL,
+  supersedes_json TEXT NOT NULL, created_at TEXT NOT NULL,
+  UNIQUE(task_id, revision)
+);
+CREATE TABLE IF NOT EXISTS task_criteria (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  amendment_id TEXT NOT NULL, criterion_key TEXT NOT NULL, description TEXT NOT NULL,
+  requirement TEXT NOT NULL, verification TEXT NOT NULL,
+  superseded_by_criterion_id TEXT, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_criteria_current_idx
+  ON task_criteria(workspace_id, task_id, superseded_by_criterion_id);
 CREATE TABLE IF NOT EXISTS requests (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL,
   task_id TEXT, session_id TEXT, attempt_id TEXT, binding_generation INTEGER,
@@ -104,6 +119,9 @@ CREATE TABLE IF NOT EXISTS attempts (
   observation TEXT NOT NULL, input_snapshot_json TEXT NOT NULL,
   predecessor_id TEXT, unresolved INTEGER NOT NULL, stop_requested_at TEXT,
   native_execution_ref_json TEXT, observation_ended_at TEXT,
+  interruption_kind TEXT, recovery_kind TEXT NOT NULL DEFAULT 'none',
+  retry_ordinal INTEGER NOT NULL DEFAULT 0, retry_limit INTEGER NOT NULL DEFAULT 0,
+  retry_reason TEXT,
   business_intent_epoch INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS handoff_previews (
@@ -111,6 +129,8 @@ CREATE TABLE IF NOT EXISTS handoff_previews (
   task_revision INTEGER NOT NULL, profile_id TEXT NOT NULL, profile_revision INTEGER NOT NULL,
   repository_id TEXT NOT NULL, repository_revision INTEGER NOT NULL,
   verification_json TEXT NOT NULL, recipient_json TEXT NOT NULL,
+  selected_reference_ids_json TEXT NOT NULL DEFAULT '[]',
+  selected_response_ids_json TEXT NOT NULL DEFAULT '[]',
   target_json TEXT NOT NULL, prompt TEXT NOT NULL, prompt_digest TEXT NOT NULL, attempt_id TEXT,
   created_at TEXT NOT NULL
 );
@@ -118,6 +138,10 @@ CREATE TABLE IF NOT EXISTS attempt_deliveries (
   attempt_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, delivery_digest TEXT NOT NULL,
   status TEXT NOT NULL, input_receipt_json TEXT, last_error_json TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS handoff_attempt_lineage (
+  attempt_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, source_attempt_id TEXT NOT NULL,
+  preview_digest TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS attempts_task_primary_unique
   ON attempts(task_id) WHERE role = 'primary' AND unresolved = 1;
@@ -144,10 +168,26 @@ CREATE TABLE IF NOT EXISTS results (
   limitations_json TEXT NOT NULL, reference_ids_json TEXT NOT NULL,
   evidence_json TEXT NOT NULL, artifacts_json TEXT NOT NULL DEFAULT '[]',
   outcome TEXT NOT NULL DEFAULT 'unspecified', submission_key TEXT,
+  result_kind TEXT NOT NULL DEFAULT 'final', criterion_evidence_json TEXT NOT NULL DEFAULT '[]',
   submission_digest TEXT, binding_json TEXT, created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS results_attempt_submission_unique
   ON results(attempt_id, submission_key) WHERE submission_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS result_acceptances (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  result_id TEXT NOT NULL, actor_id TEXT NOT NULL, decision TEXT NOT NULL,
+  missing_criteria_json TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS result_acceptances_task_idx
+  ON result_acceptances(workspace_id, task_id, created_at DESC, id DESC);
+CREATE TABLE IF NOT EXISTS blockers (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  attempt_id TEXT, kind TEXT NOT NULL, owner TEXT NOT NULL, remedy TEXT NOT NULL,
+  detail TEXT NOT NULL, status TEXT NOT NULL, resolution TEXT, recheck_note TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS blockers_task_idx
+  ON blockers(workspace_id, task_id, status, updated_at DESC, id);
 CREATE TABLE IF NOT EXISTS references_store (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT,
   kind TEXT NOT NULL, title TEXT NOT NULL, mime_type TEXT,
@@ -256,6 +296,25 @@ export function migrate(database: DatabaseSync): void {
   if (!attemptColumns.some((column) => Reflect.get(column, "name") === "observation_ended_at")) {
     database.exec("ALTER TABLE attempts ADD COLUMN observation_ended_at TEXT");
   }
+  if (!attemptColumns.some((column) => Reflect.get(column, "name") === "interruption_kind")) {
+    database.exec("ALTER TABLE attempts ADD COLUMN interruption_kind TEXT");
+  }
+  if (!attemptColumns.some((column) => Reflect.get(column, "name") === "recovery_kind")) {
+    database.exec("ALTER TABLE attempts ADD COLUMN recovery_kind TEXT NOT NULL DEFAULT 'none'");
+  }
+  if (!attemptColumns.some((column) => Reflect.get(column, "name") === "retry_ordinal")) {
+    database.exec("ALTER TABLE attempts ADD COLUMN retry_ordinal INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!attemptColumns.some((column) => Reflect.get(column, "name") === "retry_limit")) {
+    database.exec("ALTER TABLE attempts ADD COLUMN retry_limit INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!attemptColumns.some((column) => Reflect.get(column, "name") === "retry_reason")) {
+    database.exec("ALTER TABLE attempts ADD COLUMN retry_reason TEXT");
+  }
+  const taskColumns = database.prepare("PRAGMA table_info(tasks)").all();
+  if (!taskColumns.some((column) => Reflect.get(column, "name") === "scope_revision")) {
+    database.exec("ALTER TABLE tasks ADD COLUMN scope_revision INTEGER NOT NULL DEFAULT 0");
+  }
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => Reflect.get(column, "name") === "profile_id")) {
     database.exec("ALTER TABLE sessions ADD COLUMN profile_id TEXT");
@@ -279,11 +338,23 @@ export function migrate(database: DatabaseSync): void {
   if (!resultColumns.some((column) => Reflect.get(column, "name") === "submission_digest")) {
     database.exec("ALTER TABLE results ADD COLUMN submission_digest TEXT");
   }
+  if (!resultColumns.some((column) => Reflect.get(column, "name") === "result_kind")) {
+    database.exec("ALTER TABLE results ADD COLUMN result_kind TEXT NOT NULL DEFAULT 'final'");
+  }
+  if (!resultColumns.some((column) => Reflect.get(column, "name") === "criterion_evidence_json")) {
+    database.exec("ALTER TABLE results ADD COLUMN criterion_evidence_json TEXT NOT NULL DEFAULT '[]'");
+  }
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS results_attempt_submission_unique
     ON results(attempt_id, submission_key) WHERE submission_key IS NOT NULL`);
   const previewColumns = database.prepare("PRAGMA table_info(handoff_previews)").all();
   if (!previewColumns.some((column) => Reflect.get(column, "name") === "target_json")) {
     database.exec("ALTER TABLE handoff_previews ADD COLUMN target_json TEXT NOT NULL DEFAULT '{}'");
+  }
+  if (!previewColumns.some((column) => Reflect.get(column, "name") === "selected_reference_ids_json")) {
+    database.exec("ALTER TABLE handoff_previews ADD COLUMN selected_reference_ids_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!previewColumns.some((column) => Reflect.get(column, "name") === "selected_response_ids_json")) {
+    database.exec("ALTER TABLE handoff_previews ADD COLUMN selected_response_ids_json TEXT NOT NULL DEFAULT '[]'");
   }
 }
 
