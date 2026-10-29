@@ -170,6 +170,17 @@ Base unit: 4px.
 - **Structure:** completion note, explicit active-execution decision, complete/cancel/reopen/archive actions.
 - **Safety:** task state never implies stop, session close, detach, or release.
 
+### Reliable Lifecycle Section
+- **Structure:** current missing action, responsible owner, next action, criterion coverage, amendment history, current result decision, blockers, and attempt recovery.
+- **States:** no criteria, checkpoint awaiting final result, final result with gaps, accepted, blocked, interrupted, retry budget exhausted, and recovered.
+- **Controls:** fixed lifecycle command forms only; human acceptance is explicit and automatic acceptance is never offered.
+- **Layout:** one compact section composed from definition lists, sparse divided rows, and intrinsic form grids; it appears inside normal task and handoff detail flow rather than navigation.
+
+### Linked Request List
+- **Structure:** request status, blocking scope, prompt, reason, delivery state, and the safe next action.
+- **States:** blocking runtime action, nonblocking, answered, delivery pending, delivery unknown, and superseded.
+- **Authority:** task and session surfaces link to the existing Today/inbox answer authority; they never duplicate answer controls.
+
 ### Handoff Workspace
 - **Route:** `#/backlog/:taskId/handoff/:attemptId`; the attempt identifier is durable backend identity, not browser draft identity.
 - **Structure:** source snapshot, repository revision and validation request, recipient/session choice, canonical prompt preview, delivery ledger, parent/child activity, verification result, follow-up, and human decision.
