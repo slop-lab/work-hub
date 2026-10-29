@@ -6,6 +6,10 @@ import type { InteractionRepository } from '../persistence/interaction-repositor
 export type RuntimeScope = {
   readonly workspaceId: string; readonly projectId: string; readonly taskId: string;
   readonly sessionId: string; readonly attemptId: string; readonly bindingGeneration: number;
+  readonly installationId?: string | undefined; readonly nativeSessionDigest?: string | undefined;
+  readonly deliveryDigest?: string | undefined; readonly incarnation?: string | undefined;
+  readonly targetWorkspaceId?: string | undefined; readonly hostId?: string | undefined;
+  readonly nativeSessionId?: string | undefined;
 };
 
 export class BridgeQueries {
