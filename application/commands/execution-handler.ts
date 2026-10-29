@@ -10,6 +10,8 @@ import type { InteractionRepository } from "../persistence/interaction-repositor
 import type { OperationRepository } from "../persistence/operation-repository.ts";
 import type { StateRepository } from "../persistence/state-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
+import type { HandoffRepository } from "../persistence/handoff-repository.ts";
+import type { AttachedHandoffFactory } from "../persistence/attached-handoff.ts";
 import { authorizeTask, requireRevision } from "./guards.ts";
 import type { CommandOf, CommandResult } from "./types.ts";
 import { existingReservationKeys, requireExistingSelection } from "./execution-selection.ts";
@@ -18,6 +20,7 @@ import { EnvironmentLifecycleHandler } from "./environment-lifecycle-handler.ts"
 import { SessionAttachmentHandler } from "./session-attachment-handler.ts";
 import { acceptedDelegationPlan } from './delegation-plan.ts';
 import { EnvironmentRegistryHandler } from './environment-registry-handler.ts';
+import { HandoffDelegationHandler } from "./handoff-delegation-handler.ts";
 
 export class ExecutionHandler {
   readonly work: WorkRepository;
@@ -26,13 +29,13 @@ export class ExecutionHandler {
   readonly interactions: InteractionRepository;
   readonly operations: OperationRepository;
   readonly state: StateRepository;
+  private readonly handoffDelegation: HandoffDelegationHandler;
   readonly installationUsable: (
     workspaceId: string,
     kind: "execution" | "agent_runtime",
     id: string,
   ) => boolean;
-  private readonly sessionCommands: SessionExecutionHandler;
-  private readonly registry: EnvironmentRegistryHandler;
+  private readonly sessionCommands: SessionExecutionHandler; private readonly registry: EnvironmentRegistryHandler;
   readonly runtimeSupports: (installationId: string, names: readonly string[]) => boolean;
   private readonly environmentLifecycle: EnvironmentLifecycleHandler;
   private readonly sessionAttachment: SessionAttachmentHandler;
@@ -42,6 +45,8 @@ export class ExecutionHandler {
     readonly attempts: AttemptFactory; readonly environments: EnvironmentRepository;
     readonly interactions: InteractionRepository; readonly operations: OperationRepository;
     readonly state: StateRepository;
+    readonly handoffs: HandoffRepository;
+    readonly attachedHandoffs: AttachedHandoffFactory;
     readonly installationUsable: (
       workspaceId: string,
       kind: "execution" | "agent_runtime",
@@ -55,6 +60,8 @@ export class ExecutionHandler {
     this.interactions = input.interactions;
     this.operations = input.operations;
     this.state = input.state;
+    this.handoffDelegation = new HandoffDelegationHandler({ execution: input.execution,
+      handoffs: input.handoffs, attached: input.attachedHandoffs, operations: input.operations });
     this.installationUsable = input.installationUsable;
     this.runtimeSupports = input.runtimeSupports;
     this.registry = new EnvironmentRegistryHandler({ environments: input.environments, operations: input.operations, state: input.state, requireInstallation: (workspaceId, kind, id) => this.requireInstallation(workspaceId, kind, id) });
@@ -120,13 +127,20 @@ export class ExecutionHandler {
     }
     const unresolvedPrimaryAttemptId = task.primaryAttemptId && this.execution.getAttempt(actor.workspaceId, task.primaryAttemptId).unresolved ? task.primaryAttemptId : undefined;
     const plan = acceptedDelegationPlan({ task, profile, command, ...(unresolvedPrimaryAttemptId ? { unresolvedPrimaryAttemptId } : {}) });
-    const instruction = command.payload.instruction ?? plan.instruction;
+    const preview = this.handoffDelegation.preview(actor, task, profile, command);
+    const instruction = preview?.prompt ?? command.payload.instruction ?? plan.instruction;
+    if (preview !== undefined) {
+      const attached = this.handoffDelegation.delegateAttached({ actor, command, task, profile,
+        preview, authorizedEffectKinds: plan.requiredEffectKinds });
+      if (attached !== undefined) return attached;
+    }
     const created = this.execution.createDelegation({
       task, profile, instruction,
       selectedReferenceIds: command.payload.selectedReferenceIds,
       selectedResponseIds: command.payload.selectedResponseIds,
       authorizedEffectKinds: plan.requiredEffectKinds,
     });
+    if (preview !== undefined) this.handoffDelegation.bindNew(actor.workspaceId, preview, created.attempt);
     const environment = command.payload.environment;
     let bindingId: string | undefined;
     if (environment.mode === "existing") {
