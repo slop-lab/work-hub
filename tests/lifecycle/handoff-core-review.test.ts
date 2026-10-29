@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { z } from "zod";
 
+import { digest } from "../../application/persistence/codec.ts";
 import { HandoffRepository } from "../../application/persistence/handoff-repository.ts";
+import { PromptEnvelopeSchema } from "../../application/prompts/index.ts";
 import { Store } from "../../application/persistence/database.ts";
 import { createTask, drainIdle, finishAttempt, fixture, member } from "../acceptance-fixture.ts";
 
@@ -94,7 +98,7 @@ test("attempt delivery acknowledgment is monotonic", () => {
   }
 });
 
-test("verification retry preserves handoff lineage when task scope is unchanged", async () => {
+test("verification retry preserves rendered prompt tuple when task scope is unchanged", async () => {
   // Given
   const f = fixture();
   try {
@@ -102,17 +106,22 @@ test("verification retry preserves handoff lineage when task scope is unchanged"
     const repository = f.hub.registerProjectRepository(member, {
       projectId: "project-default", canonicalIdentity: "https://example.invalid/org/retry.git",
     });
+    const reference = await f.hub.execute(member, { commandId: "reference-handoff-retry-lineage",
+      type: "reference.create", target: { kind: "task", id: taskId },
+      payload: { kind: "text", title: "Retained verifier context", content: "Run the retained native fixture." } });
+    const referenceId = reference.objectRefs[0]?.id;
+    assert.ok(referenceId);
     const preview = f.hub.previewHandoff(member, {
       taskId, profileId: "profile-structured", repositoryId: repository.id,
       repositoryRevision: repository.revision, sourceBranch: "work/retry", sourceCommit,
-      requestedValidation: "Retry verification", selectedReferenceIds: [],
+      requestedValidation: "Retry verification", selectedReferenceIds: [referenceId],
       selectedResponseIds: [], recipient: { kind: "new" },
     });
     const delegated = await f.hub.execute(member, {
       commandId: "delegate-handoff-retry-lineage", type: "attempt.delegate",
       target: { kind: "task", id: taskId }, expected: { task: 1, profile: 1 },
       payload: { profileId: "profile-structured", environment: { mode: "none" },
-        selectedReferenceIds: [], selectedResponseIds: [], authorizedEffectKinds: [],
+        selectedReferenceIds: [referenceId], selectedResponseIds: [], authorizedEffectKinds: [],
         handoff: { previewDigest: preview.previewDigest, verification: preview.verification,
           recipient: { kind: "new" } } },
     });
@@ -126,7 +135,7 @@ test("verification retry preserves handoff lineage when task scope is unchanged"
       commandId: "retry-handoff-retry-lineage", type: "attempt.retry",
       target: { kind: "attempt", id: sourceAttempt.id },
       expected: { task: f.hub.getTask(member, taskId).revision, profile: 1 },
-      payload: { predecessorId: sourceAttempt.id, input: "snapshot", sameSession: false,
+      payload: { predecessorId: sourceAttempt.id, input: "current_task", sameSession: false,
         reason: "Retry the failed verifier.", retryLimit: 2, environment: { mode: "none" } },
     });
 
@@ -140,6 +149,33 @@ test("verification retry preserves handoff lineage when task scope is unchanged"
     assert.equal(detail.attempt.retryOrdinal, 1);
     assert.equal(detail.attempt.profileId, sourceAttempt.profileId);
     assert.equal(detail.attempt.profileRevision, sourceAttempt.profileRevision);
+    const snapshot = detail.attempt.inputSnapshot;
+    const instruction = z.string().parse(snapshot["instruction"]);
+    assert.equal(snapshot["promptDigest"], digest(instruction));
+    assert.equal(snapshot["promptDigest"], preview.promptDigest);
+    const envelope = PromptEnvelopeSchema.parse(JSON.parse(instruction));
+    assert.deepEqual(snapshot["promptTemplate"], {
+      id: "verifier_handoff", version: 1, inputDigest: digest(envelope.input),
+    });
+    assert.deepEqual(envelope.template, { id: "verifier_handoff", version: 1 });
+    assert.equal(z.object({ verification: z.object({ sourceCommit: z.string() }) })
+      .parse(envelope.input).verification.sourceCommit, sourceCommit);
+    assert.deepEqual(snapshot["selectedReferenceIds"], [referenceId]);
+    assert.match(JSON.stringify(snapshot["contextItems"]), /Run the retained native fixture/);
+    assert.match(JSON.stringify(envelope.input["context"]), /Run the retained native fixture/);
+    const database = new DatabaseSync(f.path);
+    try {
+      const payloadSchema = z.object({ attemptId: z.string(),
+        inputSnapshot: z.record(z.string(), z.unknown()) });
+      const payload = database.prepare(
+        "SELECT payload_json AS payloadJson FROM outbox WHERE work_type='delegation.advance'",
+      ).all().map((row) => z.object({ payloadJson: z.string() }).parse(row))
+        .map((row) => payloadSchema.parse(JSON.parse(row.payloadJson)))
+        .find((candidate) => candidate.attemptId === retryId);
+      assert.ok(payload);
+      assert.equal(payload.inputSnapshot["instruction"], preview.prompt);
+      assert.equal(payload.inputSnapshot["promptDigest"], preview.promptDigest);
+    } finally { database.close(); }
   } finally {
     f.close();
   }

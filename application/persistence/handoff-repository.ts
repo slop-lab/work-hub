@@ -7,9 +7,10 @@ import { conflict, forbidden } from "../domain/errors.ts";
 import type { AttemptView, ExecutionProfileView, TaskView } from "../domain/model.ts";
 import { renderVerificationPrompt } from "../domain/handoff-prompt.ts";
 import { assembleContext } from "../artifacts/snapshot-context.ts";
-import type { Clock } from "./codec.ts";
-import { digest, newId, parseJson } from "./codec.ts";
+import { digest, newId, parseJson, type Clock } from "./codec.ts";
 import { AttemptDeliveryRepository } from "./attempt-delivery-repository.ts";
+import { LifecycleRepository } from "./lifecycle-repository.ts";
+import { preserveHandoffLineage } from "./handoff-lineage.ts";
 
 export type ProjectRepository = {
   readonly id: string;
@@ -112,7 +113,14 @@ export class HandoffRepository {
       input.verification.repositoryRevision !== repository.revision) {
       throw conflict("repository_revision_conflict", "Repository identity or revision is stale.");
     }
-    const rendered = renderVerificationPrompt({ task: input.task, repository, verification: input.verification });
+    const lifecycle = new LifecycleRepository(this.database, this.clock).view(input.workspaceId, input.task.id);
+    const contextItems = assembleContext(this.database, { workspaceId: input.workspaceId,
+      taskId: input.task.id, selectedReferenceIds: input.selectedReferenceIds,
+      selectedResponseIds: input.selectedResponseIds });
+    const rendered = renderVerificationPrompt({ task: input.task, repository,
+      verification: input.verification, amendments: lifecycle.amendments, criteria: lifecycle.criteria,
+      context: contextItems.map((item) => ({ id: item.sourceId,
+        text: item.includedText ?? item.omissionReason ?? "Context unavailable." })) });
     const previewBase = {
       taskId: input.task.id, taskRevision: input.task.revision,
       profileId: input.profile.id, profileRevision: input.profile.revision,
@@ -219,31 +227,7 @@ export class HandoffRepository {
     readonly attempt: AttemptView; readonly task: TaskView }): void {
     const preview = this.previewForAttempt(input.workspaceId, input.sourceAttempt.id);
     if (preview === undefined) return;
-    const sourceScopeRevision = z.object({ scopeRevision: z.number().default(0) })
-      .passthrough().parse(input.sourceAttempt.inputSnapshot).scopeRevision;
-    if (sourceScopeRevision !== input.task.scopeRevision) {
-      throw conflict("handoff_fresh_preview_required",
-        "Task scope changed after the source handoff; create a fresh preview before continuing.");
-    }
-    const snapshot = z.record(z.string(), z.unknown()).parse(input.attempt.inputSnapshot);
-    const base: Record<string, unknown> = { ...snapshot, verification: preview.verification,
-      promptDigest: preview.promptDigest };
-    delete base["digest"];
-    const complete = { ...base, digest: digest(base) };
-    const now = this.clock.now().toISOString();
-    this.database.prepare(`UPDATE attempts SET input_snapshot_json=?,updated_at=?
-      WHERE workspace_id=? AND id=?`).run(JSON.stringify(complete), now,
-      input.workspaceId, input.attempt.id);
-    this.database.prepare(`INSERT INTO handoff_attempt_lineage
-      (attempt_id,workspace_id,source_attempt_id,preview_digest,created_at)
-      VALUES (?,?,?,?,?)`).run(input.attempt.id, input.workspaceId, input.sourceAttempt.id,
-      preview.previewDigest, now);
-    const deliveryDigest = digest({ attemptId: input.attempt.id, inputDigest: complete.digest,
-      previewDigest: preview.previewDigest, sourceAttemptId: input.sourceAttempt.id });
-    this.database.prepare(`INSERT INTO attempt_deliveries
-      (attempt_id,workspace_id,delivery_digest,status,created_at,updated_at)
-      VALUES (?,?,?,'pending',?,?)`).run(input.attempt.id, input.workspaceId,
-      deliveryDigest, now, now);
+    preserveHandoffLineage({ database: this.database, clock: this.clock, preview, ...input });
   }
 
   delivery(workspaceId: string, attemptId: string): Readonly<Record<string, unknown>> {
