@@ -1,16 +1,18 @@
 import type {
   AttemptLifecycleView,
   BlockerView,
+  CriterionEvidenceView,
   ResultAcceptanceView,
   TaskCriterionView,
   TaskLifecycleView,
 } from "./lifecycle-model.ts";
+import { criterionEvidenceSatisfies } from "./lifecycle-evidence.ts";
 
 type Projection = TaskLifecycleView["projection"];
 
 export function buildLifecycleProjection(input: {
   readonly criteria: readonly TaskCriterionView[];
-  readonly satisfiedCriterionIds: ReadonlySet<string>;
+  readonly criterionEvidence: readonly CriterionEvidenceView[];
   readonly blockers: readonly BlockerView[];
   readonly acceptance?: ResultAcceptanceView;
   readonly attempts: readonly AttemptLifecycleView[];
@@ -18,8 +20,9 @@ export function buildLifecycleProjection(input: {
   readonly hasResult: boolean;
 }): Projection {
   const required = input.criteria.filter((criterion) => criterion.requirement === "required");
-  const missing = required.filter((criterion) => !input.satisfiedCriterionIds.has(criterion.id))
-    .map((criterion) => criterion.id);
+  const evidence = new Map(input.criterionEvidence.map((item) => [item.criterionId, item]));
+  const missing = required.filter((criterion) =>
+    !criterionEvidenceSatisfies(criterion, evidence.get(criterion.id))).map((criterion) => criterion.id);
   const blocker = input.blockers.find((candidate) => candidate.status !== "resolved");
   const interrupted = input.attempts.some((attempt) => attempt.interruption !== undefined);
   const action = input.acceptance?.decision === "accepted"

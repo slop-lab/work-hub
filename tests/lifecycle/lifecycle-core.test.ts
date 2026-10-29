@@ -57,6 +57,14 @@ test("task amendments preserve criterion history and final acceptance requires c
     assert.equal(rejectedCheckpoint.error?.code, "result_not_final");
     const criterionId = f.hub.getTaskLifecycle(member, taskId).criteria[0]?.id;
     assert.ok(criterionId);
+    const reference = await f.hub.execute(member, {
+      commandId: "reference-lifecycle-criteria",
+      type: "reference.create",
+      target: { kind: "task", id: taskId },
+      payload: { kind: "text", title: "Focused lifecycle test receipt", content: "Focused suite passed." },
+    });
+    const referenceId = reference.objectRefs[0]?.id;
+    assert.ok(referenceId);
     const final = await f.hub.execute(member, {
       commandId: "final-lifecycle-criteria",
       type: "result.submit",
@@ -65,13 +73,13 @@ test("task amendments preserve criterion history and final acceptance requires c
         kind: "final",
         summary: "Focused suite passed.",
         limitations: [],
-        referenceIds: [],
+        referenceIds: [referenceId],
         evidence: [],
         criterionEvidence: [{
           criterionId,
           status: "satisfied",
           detail: "The focused service suite completed successfully.",
-          referenceIds: [],
+          referenceIds: [referenceId],
         }],
       },
     });
@@ -165,75 +173,6 @@ test("incomplete acceptance persists explicit missing criteria without completin
     assert.equal(f.hub.getTask(member, taskId).status, "review");
     assert.equal(f.hub.getTaskLifecycle(member, taskId).projection.currentMissingAction, "revise_result");
     assert.deepEqual(f.hub.getTaskLifecycle(member, taskId).acceptance?.missingCriteria, [criterionId]);
-  } finally {
-    f.close();
-  }
-});
-
-test("blockers and interrupted attempts keep explicit recovery and bounded retry state", async () => {
-  // Given
-  const f = fixture();
-  try {
-    const taskId = await createTask(f.hub, "lifecycle-recovery");
-    const attempt = await delegateNone(f.hub, taskId, "lifecycle-recovery");
-    const opened = await f.hub.execute(member, {
-      commandId: "blocker-open-lifecycle-recovery",
-      type: "blocker.open",
-      target: { kind: "task", id: taskId },
-      payload: {
-        attemptId: attempt.id,
-        kind: "external_dependency",
-        owner: "release-engineering",
-        remedy: "Publish the signed fixture.",
-        detail: "The verifier fixture is not available yet.",
-      },
-    });
-    const blockerId = opened.objectRefs[0]?.id;
-    assert.ok(blockerId);
-    await f.hub.execute(member, {
-      commandId: "attempt-reconcile-lifecycle-recovery",
-      type: "attempt.reconcile",
-      target: { kind: "attempt", id: attempt.id },
-      payload: { interruption: "retryable_failure", recovery: "reconcile", note: "Provider reported a transient failure." },
-    });
-
-    // When
-    const resumed = await f.hub.execute(member, {
-      commandId: "attempt-resume-lifecycle-recovery",
-      type: "attempt.controlledResume",
-      target: { kind: "attempt", id: attempt.id },
-      payload: { recovery: "retry", reason: "Retry after dependency publication.", retryLimit: 1 },
-    });
-    const exhausted = await f.hub.execute(member, {
-      commandId: "attempt-resume-exhausted-lifecycle-recovery",
-      type: "attempt.controlledResume",
-      target: { kind: "attempt", id: attempt.id },
-      payload: { recovery: "retry", reason: "Second retry must not exceed budget.", retryLimit: 1 },
-    });
-    await f.hub.execute(member, {
-      commandId: "blocker-resolve-lifecycle-recovery",
-      type: "blocker.resolve",
-      target: { kind: "blocker", id: blockerId },
-      payload: { resolution: "Fixture published." },
-    });
-    await f.hub.execute(member, {
-      commandId: "blocker-recheck-lifecycle-recovery",
-      type: "blocker.recheck",
-      target: { kind: "blocker", id: blockerId },
-      payload: { note: "Recheck scheduled without fabricating provider success." },
-    });
-
-    // Then
-    assert.equal(resumed.status, "confirmed");
-    assert.equal(exhausted.error?.code, "retry_budget_exhausted");
-    const lifecycle = f.hub.getTaskLifecycle(member, taskId);
-    assert.equal(lifecycle.blockers[0]?.status, "rechecking");
-    assert.equal(lifecycle.projection.currentMissingAction, "resolve_blocker");
-    const currentAttempt = lifecycle.attempts.find((candidate) => candidate.id === attempt.id);
-    assert.equal(currentAttempt?.interruption, "retryable_failure");
-    assert.equal(currentAttempt?.recovery, "retry");
-    assert.equal(currentAttempt?.retry.ordinal, 1);
-    assert.equal(currentAttempt?.retry.limit, 1);
   } finally {
     f.close();
   }

@@ -20,6 +20,7 @@ import type { Clock } from "./codec.ts";
 import { newId, parseJson } from "./codec.ts";
 import { acceptanceRowSchema, amendmentRowSchema, blockerRowSchema,
   criterionRowSchema } from "./lifecycle-codec.ts";
+import { LifecycleRecoveryStore } from "./lifecycle-recovery-store.ts";
 
 type CriterionInput = {
   readonly key: string;
@@ -31,10 +32,12 @@ type CriterionInput = {
 export class LifecycleRepository {
   private readonly database: DatabaseSync;
   private readonly clock: Clock;
+  private readonly recovery: LifecycleRecoveryStore;
 
   constructor(database: DatabaseSync, clock: Clock) {
     this.database = database;
     this.clock = clock;
+    this.recovery = new LifecycleRecoveryStore(database, clock);
   }
 
   amend(input: { readonly workspaceId: string; readonly taskId: string; readonly authorId: string;
@@ -91,14 +94,16 @@ export class LifecycleRepository {
 
   accept(input: { readonly workspaceId: string; readonly taskId: string; readonly resultId: string;
     readonly actorId: string; readonly decision: AcceptanceDecision;
-    readonly missingCriteria: readonly string[]; readonly note?: string }): ResultAcceptanceView {
+    readonly missingCriteria: readonly string[]; readonly businessIntentEpoch: number;
+    readonly note?: string }): ResultAcceptanceView {
     const id = newId("acceptance");
     const now = this.clock.now().toISOString();
     this.database.prepare(`INSERT INTO result_acceptances
-      (id,workspace_id,task_id,result_id,actor_id,decision,missing_criteria_json,note,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?)`).run(id, input.workspaceId, input.taskId, input.resultId,
-      input.actorId, input.decision, JSON.stringify(input.missingCriteria), input.note ?? null, now);
-    return this.latestAcceptance(input.workspaceId, input.taskId) as ResultAcceptanceView;
+      (id,workspace_id,task_id,result_id,actor_id,decision,missing_criteria_json,note,business_intent_epoch,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id, input.workspaceId, input.taskId, input.resultId,
+      input.actorId, input.decision, JSON.stringify(input.missingCriteria), input.note ?? null,
+      input.businessIntentEpoch, now);
+    return this.latestAcceptance(input.workspaceId, input.taskId, input.businessIntentEpoch) as ResultAcceptanceView;
   }
 
   openBlocker(input: { readonly workspaceId: string; readonly taskId: string;
@@ -132,37 +137,25 @@ export class LifecycleRepository {
   }
 
   reconcileAttempt(input: { readonly workspaceId: string; readonly attemptId: string;
-    readonly interruption: InterruptionKind; readonly recovery: RecoveryKind }): void {
-    this.database.prepare(`UPDATE attempts SET interruption_kind=?,recovery_kind=?,updated_at=?
-      WHERE workspace_id=? AND id=?`).run(input.interruption, input.recovery,
-      this.clock.now().toISOString(), input.workspaceId, input.attemptId);
-  }
+    readonly interruption: InterruptionKind;
+    readonly recovery: RecoveryKind }): void { this.recovery.reconcile(input); }
 
   controlledResume(input: { readonly workspaceId: string; readonly attemptId: string;
     readonly recovery: Extract<RecoveryKind, "resume" | "retry" | "escalated">;
-    readonly reason: string; readonly retryLimit: number }): void {
-    const attempt = z.object({ retryOrdinal: z.number() }).parse(this.database.prepare(
-      "SELECT retry_ordinal AS retryOrdinal FROM attempts WHERE workspace_id=? AND id=?",
-    ).get(input.workspaceId, input.attemptId));
-    const ordinal = input.recovery === "retry" ? attempt.retryOrdinal + 1 : attempt.retryOrdinal;
-    if (ordinal > input.retryLimit) throw conflict("retry_budget_exhausted", "Retry budget is exhausted.");
-    this.database.prepare(`UPDATE attempts SET recovery_kind=?,retry_ordinal=?,retry_limit=?,
-      retry_reason=?,updated_at=? WHERE workspace_id=? AND id=?`).run(input.recovery, ordinal,
-      input.retryLimit, input.reason, this.clock.now().toISOString(), input.workspaceId, input.attemptId);
-  }
+    readonly reason: string; readonly retryLimit: number }): void { this.recovery.control(input); }
 
   recordRetry(input: { readonly workspaceId: string; readonly attemptId: string;
-    readonly predecessorOrdinal: number; readonly limit: number; readonly reason: string }): void {
-    const ordinal = input.predecessorOrdinal + 1;
-    if (ordinal > input.limit) throw conflict("retry_budget_exhausted", "Retry budget is exhausted.");
-    this.database.prepare(`UPDATE attempts SET recovery_kind='retry',retry_ordinal=?,retry_limit=?,
-      retry_reason=?,updated_at=? WHERE workspace_id=? AND id=?`).run(ordinal, input.limit,
-      input.reason, this.clock.now().toISOString(), input.workspaceId, input.attemptId);
-  }
+    readonly predecessorOrdinal: number; readonly limit: number; readonly reason: string }): void { this.recovery.recordRetry(input); }
+
+  recordResume(input: { readonly workspaceId: string; readonly attemptId: string;
+    readonly retryOrdinal: number; readonly retryLimit: number; readonly reason: string }): void { this.recovery.recordResume(input); }
 
   view(workspaceId: string, taskId: string): TaskLifecycleView {
-    const task = z.object({ scopeRevision: z.number(), primaryAttemptId: z.string().nullable() }).parse(
-      this.database.prepare(`SELECT scope_revision AS scopeRevision,primary_attempt_id AS primaryAttemptId
+    const task = z.object({ scopeRevision: z.number(), primaryAttemptId: z.string().nullable(),
+      businessIntentEpoch: z.number(),
+      status: z.enum(["backlog", "active", "review", "done", "canceled"]) }).parse(
+      this.database.prepare(`SELECT scope_revision AS scopeRevision,primary_attempt_id AS primaryAttemptId,
+        business_intent_epoch AS businessIntentEpoch,status
         FROM tasks WHERE workspace_id=? AND id=?`).get(workspaceId, taskId));
     const attempts = this.database.prepare(`SELECT id,interruption_kind AS interruption,
       recovery_kind AS recovery,retry_ordinal AS ordinal,retry_limit AS retryLimit,
@@ -175,25 +168,30 @@ export class LifecycleRepository {
           "provider_stop", "operator_stop", "retryable_failure", "crash", "unknown"]).parse(attempt.interruption) }),
         recovery: attempt.recovery, retry: { ordinal: attempt.ordinal, limit: attempt.retryLimit,
           ...(attempt.reason === null ? {} : { reason: attempt.reason }) } }));
-    const acceptance = this.latestAcceptance(workspaceId, taskId);
+    const acceptance = this.latestAcceptance(workspaceId, taskId, task.businessIntentEpoch);
     const criteria = this.currentCriteria(workspaceId, taskId);
     const latestResult = task.primaryAttemptId === null ? undefined :
       z.object({ criterionEvidenceJson: z.string() }).optional().parse(
-        this.database.prepare(`SELECT criterion_evidence_json AS criterionEvidenceJson FROM results
-          WHERE workspace_id=? AND task_id=? AND attempt_id=? ORDER BY created_at DESC,id DESC LIMIT 1`)
-          .get(workspaceId, taskId, task.primaryAttemptId));
-    const evidence = latestResult === undefined ? [] : z.array(z.object({ criterionId: z.string(),
-      status: z.enum(["satisfied", "not_satisfied", "not_verified"]) }).passthrough())
+        acceptance?.decision === "accepted"
+          ? this.database.prepare(`SELECT criterion_evidence_json AS criterionEvidenceJson FROM results
+              WHERE workspace_id=? AND id=?`).get(workspaceId, acceptance.resultId)
+          : this.database.prepare(`SELECT criterion_evidence_json AS criterionEvidenceJson FROM results
+              WHERE workspace_id=? AND task_id=? AND attempt_id=? AND EXISTS(
+                SELECT 1 FROM attempts WHERE attempts.id=results.attempt_id
+                AND attempts.business_intent_epoch=?) ORDER BY created_at DESC,id DESC LIMIT 1`)
+            .get(workspaceId, taskId, task.primaryAttemptId, task.businessIntentEpoch));
+    const criterionEvidence = latestResult === undefined ? [] : z.array(z.object({
+      criterionId: z.string(), status: z.enum(["satisfied", "not_satisfied", "not_verified"]),
+      detail: z.string(), referenceIds: z.array(z.string()),
+    }))
       .parse(parseJson(latestResult.criterionEvidenceJson));
-    const satisfied = new Set(evidence.filter((item) => item.status === "satisfied")
-      .map((item) => item.criterionId));
     const blockers = this.blockers(workspaceId, taskId);
     const active = z.object({ present: z.number() }).parse(this.database.prepare(
       "SELECT EXISTS(SELECT 1 FROM attempts WHERE workspace_id=? AND task_id=? AND unresolved=1) AS present",
     ).get(workspaceId, taskId)).present === 1;
     const projectionAttempts = task.primaryAttemptId === null ? [] :
       attempts.filter((attempt) => attempt.id === task.primaryAttemptId);
-    const projection = buildLifecycleProjection({ criteria, satisfiedCriterionIds: satisfied,
+    const projection = buildLifecycleProjection({ criteria, criterionEvidence,
       blockers, ...(acceptance === undefined ? {} : { acceptance }), attempts: projectionAttempts, active,
       hasResult: latestResult !== undefined });
     return { taskId, scopeRevision: task.scopeRevision, amendments: this.amendments(workspaceId, taskId),
@@ -231,11 +229,13 @@ export class LifecycleRepository {
       createdAt: value.createdAt };
   }
 
-  private latestAcceptance(workspaceId: string, taskId: string): ResultAcceptanceView | undefined {
+  private latestAcceptance(workspaceId: string, taskId: string,
+    businessIntentEpoch: number): ResultAcceptanceView | undefined {
     const row = this.database.prepare(`SELECT id,task_id AS taskId,result_id AS resultId,
       actor_id AS actorId,decision,missing_criteria_json AS missingCriteriaJson,note,
       created_at AS createdAt FROM result_acceptances WHERE workspace_id=? AND task_id=?
-      ORDER BY created_at DESC,id DESC LIMIT 1`).get(workspaceId, taskId);
+      AND business_intent_epoch=? ORDER BY created_at DESC,id DESC LIMIT 1`)
+      .get(workspaceId, taskId, businessIntentEpoch);
     if (row === undefined) return undefined;
     const value = acceptanceRowSchema.parse(row);
     return { id: value.id, taskId: value.taskId, resultId: value.resultId, actorId: value.actorId,
