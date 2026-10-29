@@ -4,6 +4,7 @@ import { CommandService } from "../commands/service.ts";
 import { ContinuationHandler } from "../commands/continuation-handler.ts";
 import { ExecutionHandler } from "../commands/execution-handler.ts";
 import { InteractionHandler } from "../commands/interaction-handler.ts";
+import { LifecycleHandler } from "../commands/lifecycle-handler.ts";
 import { WorkHandler } from "../commands/work-handler.ts";
 import { unsupported } from "../domain/errors.ts";
 import { AttemptFactory } from "../persistence/attempt-factory.ts";
@@ -14,6 +15,7 @@ import { EnvironmentRepository } from "../persistence/environment-repository.ts"
 import { ExecutionRepository } from "../persistence/execution-repository.ts";
 import { HandoffRepository } from "../persistence/handoff-repository.ts";
 import { InteractionRepository } from "../persistence/interaction-repository.ts";
+import { LifecycleRepository } from "../persistence/lifecycle-repository.ts";
 import { ObservationRepository } from "../persistence/observation-repository.ts";
 import { OperationRepository } from "../persistence/operation-repository.ts";
 import { QueryRepository } from "../persistence/query-repository.ts";
@@ -48,6 +50,7 @@ export function createHubRuntime(path: string, store: Store, options: HubRuntime
   const handoffs = new HandoffRepository(store.database, store.clock);
   const environments = new EnvironmentRepository(store.database, store.clock);
   const results = new ResultRepository(store.database, store.clock);
+  const lifecycle = new LifecycleRepository(store.database, store.clock);
   const operations = new OperationRepository(store.database, store.clock);
   const observation = new ObservationRepository(store.database, store.clock);
   const state = new StateRepository(store.database, store.clock);
@@ -79,27 +82,29 @@ export function createHubRuntime(path: string, store: Store, options: HubRuntime
       installation.kind === kind && installation.id === id && installation.available && installation.enabled);
   };
   const executionHandler = new ExecutionHandler({ work, execution, attempts, environments,
-    interactions, operations, state, handoffs, attachedHandoffs,
+    interactions, operations, state, handoffs, attachedHandoffs, lifecycle,
     installationUsable: (workspaceId, kind, id) => {
       if (!connectors.available(kind, id)) throw unsupported("connector_unavailable",
         `Connector installation ${id} is not configured or compatible.`);
       return installationUsable(workspaceId, kind, id);
     }, runtimeSupports: (id, names) => connectors.runtimeSupports(id, names) });
   const commands = new CommandService({ store, operations,
-    work: new WorkHandler(work, execution, results, state),
+    work: new WorkHandler({ work, execution, results, state, lifecycle }),
     interactions: new InteractionHandler(interactions, operations, () => store.clock.now()),
+    lifecycle: new LifecycleHandler({ lifecycle, work, execution, results }),
     execution: executionHandler,
     continuations: new ContinuationHandler({ work, execution, attempts, operations, environments,
-      observation, results, state, installationUsable,
+      observation, results, state, handoffs, lifecycle, installationUsable,
       runtimeSupports: (id, names) => connectors.runtimeSupports(id, names), now: () => store.clock.now() }),
     administration });
-  const queries = new QueryService({ work, interactions, execution, environments, results, operations, query });
+  const queries = new QueryService({ work, interactions, execution, environments, results,
+    operations, query, lifecycle });
   const delegation = new DelegationWorker({ connectors, operations, environments, execution, state });
   const runtime = new RuntimeWorker({ connectors, operations, state, execution, attempts, work,
     interactions, handoffs });
   const executionWorker = new ExecutionWorker({ connectors, operations, environments });
   const reconciliation = new ReconcileWorker({ connectors, state, observation, execution,
-    interactions, results });
+    interactions, results, lifecycle, work });
   const worker = new OrchestrationWorker({ connectors, operations, delegation, runtime,
     execution: executionWorker, reconciliation, terminalFailure: (item, receipt) => {
       if (["delegation.advance", "execution.attachForDelegation", "session.attachEnvironment",
@@ -114,5 +119,5 @@ export function createHubRuntime(path: string, store: Store, options: HubRuntime
     } });
   return { administration, commands, queries, worker,
     bridge: new BridgeQueries(store.database, interactions), simulators,
-    handoffService: new HandoffService({ execution, handoffs, work }), useSimulator };
+    handoffService: new HandoffService({ execution, handoffs, work, results }), useSimulator };
 }

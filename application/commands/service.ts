@@ -10,6 +10,7 @@ import type { OperationRepository } from "../persistence/operation-repository.ts
 import type { ContinuationHandler } from "./continuation-handler.ts";
 import type { ExecutionHandler } from "./execution-handler.ts";
 import type { InteractionHandler } from "./interaction-handler.ts";
+import type { LifecycleHandler } from "./lifecycle-handler.ts";
 import type { CommandResult } from "./types.ts";
 import type { WorkHandler } from "./work-handler.ts";
 import type { Administration, AdminCommand } from "../administration/index.ts";
@@ -23,6 +24,7 @@ export class CommandService {
   private readonly operations: OperationRepository;
   private readonly work: WorkHandler;
   private readonly interactions: InteractionHandler;
+  private readonly lifecycle: LifecycleHandler;
   private readonly execution: ExecutionHandler;
   private readonly continuations: ContinuationHandler;
   private readonly administration: Administration;
@@ -31,6 +33,7 @@ export class CommandService {
   constructor(input: {
     readonly store: Store; readonly operations: OperationRepository;
     readonly work: WorkHandler; readonly interactions: InteractionHandler;
+    readonly lifecycle: LifecycleHandler;
     readonly execution: ExecutionHandler; readonly continuations: ContinuationHandler;
     readonly administration: Administration;
   }) {
@@ -38,6 +41,7 @@ export class CommandService {
     this.operations = input.operations;
     this.work = input.work;
     this.interactions = input.interactions;
+    this.lifecycle = input.lifecycle;
     this.execution = input.execution;
     this.continuations = input.continuations;
     this.administration = input.administration;
@@ -113,6 +117,13 @@ export class CommandService {
       case "task.archive": return this.work.archive(actor, command);
       case "task.requestRevision": return this.requestRevision(actor, command);
       case "result.submit": return this.work.submitResult(actor, command);
+      case "task.amend": return this.lifecycle.amend(actor, command);
+      case "task.acceptResult": return this.lifecycle.acceptResult(actor, command);
+      case "blocker.open": return this.lifecycle.openBlocker(actor, command);
+      case "blocker.resolve": return this.lifecycle.resolveBlocker(actor, command);
+      case "blocker.recheck": return this.lifecycle.recheckBlocker(actor, command);
+      case "attempt.reconcile": return this.lifecycle.reconcileAttempt(actor, command);
+      case "attempt.controlledResume": return this.lifecycle.controlledResume(actor, command);
       case 'attempt.report': return this.work.reportActivity(actor, command);
       case "request.create": return this.interactions.create(actor, command);
       case "request.respond": return this.interactions.respond(actor, command);
