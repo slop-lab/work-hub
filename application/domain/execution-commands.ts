@@ -79,6 +79,8 @@ export const executionCommandSchemas = [
       profileId: idSchema.optional(),
       input: z.union([z.literal("snapshot"), z.literal("current_task")]),
       recoveryDecisionId: idSchema.optional(),
+      reason: textSchema.min(1).default("Controlled retry"),
+      retryLimit: z.number().int().min(1).max(20).default(3),
       sameSession: z.boolean().default(false),
       environment: environmentSelectionSchema.optional(),
     }),

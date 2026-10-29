@@ -3,11 +3,13 @@ import { z } from "zod";
 import { HubError } from "./errors.ts";
 import { executionCommandSchemas } from "./execution-commands.ts";
 import { interactionCommandSchemas } from "./interaction-commands.ts";
+import { lifecycleCommandSchemas } from "./lifecycle-commands.ts";
 import { workCommandSchemas } from "./work-commands.ts";
 
 export const hubCommandSchema = z.discriminatedUnion("type", [
   ...workCommandSchemas,
   ...interactionCommandSchemas,
+  ...lifecycleCommandSchemas,
   ...executionCommandSchemas,
 ]);
 
