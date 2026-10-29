@@ -176,7 +176,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS results_attempt_submission_unique
 CREATE TABLE IF NOT EXISTS result_acceptances (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
   result_id TEXT NOT NULL, actor_id TEXT NOT NULL, decision TEXT NOT NULL,
-  missing_criteria_json TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL
+  missing_criteria_json TEXT NOT NULL, note TEXT,
+  business_intent_epoch INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS result_acceptances_task_idx
   ON result_acceptances(workspace_id, task_id, created_at DESC, id DESC);
@@ -314,6 +315,16 @@ export function migrate(database: DatabaseSync): void {
   const taskColumns = database.prepare("PRAGMA table_info(tasks)").all();
   if (!taskColumns.some((column) => Reflect.get(column, "name") === "scope_revision")) {
     database.exec("ALTER TABLE tasks ADD COLUMN scope_revision INTEGER NOT NULL DEFAULT 0");
+  }
+  const acceptanceColumns = database.prepare("PRAGMA table_info(result_acceptances)").all();
+  if (!acceptanceColumns.some((column) => Reflect.get(column, "name") === "business_intent_epoch")) {
+    database.exec("ALTER TABLE result_acceptances ADD COLUMN business_intent_epoch INTEGER NOT NULL DEFAULT 0");
+    database.exec(`UPDATE result_acceptances AS acceptance SET business_intent_epoch=CASE
+      WHEN (SELECT status FROM tasks WHERE tasks.id=acceptance.task_id) IN ('done','review')
+       AND NOT EXISTS (SELECT 1 FROM task_entries AS entry WHERE entry.task_id=acceptance.task_id
+         AND entry.entry_type='human_decision' AND entry.created_at>=acceptance.created_at)
+      THEN COALESCE((SELECT business_intent_epoch FROM tasks WHERE tasks.id=acceptance.task_id),0)
+      ELSE -1 END`);
   }
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => Reflect.get(column, "name") === "profile_id")) {
