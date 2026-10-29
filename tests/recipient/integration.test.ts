@@ -18,9 +18,10 @@ test('global Work Hub tools bind calls to native SDK session context rather than
     worktree: '/fixture', abort: new AbortController().signal, metadata: () => undefined, ask: async () => undefined };
   assert.equal(await tools.workhub_assignment.execute({}, context), JSON.stringify({ scope: 'ses_disposable', operation: 'assignment' }));
   await tools.workhub_ack.execute({ deliveryDigest: 'sha256:exact-delivery' }, context);
-  await tools.workhub_result.execute({ submissionKey: 'verification-report',
+  await tools.workhub_result.execute({ submissionKey: 'verification-report', kind: 'checkpoint',
     sourceCommit: 'a'.repeat(40), contextDigest: 'sha256:exact-context', outcome: 'partial', summary: 'Only local checks completed.', limitations: ['Native validation blocked.'],
     referenceIds: [], artifacts: [{ repositoryId: 'repo-one', sourceCommit: 'a'.repeat(40), path: 'docs/report.md' }],
+    criterionEvidence: [],
     evidence: [{ origin: 'agent_claim', detail: 'Local evidence only.' }] }, context);
   assert.deepEqual(received.map((item) => item.sessionId), ['ses_disposable', 'ses_disposable', 'ses_disposable']);
   assert.deepEqual(received.map((item) => item.operation.kind), ['assignment', 'ack', 'result']);

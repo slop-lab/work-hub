@@ -34,9 +34,9 @@ export function createWorkHubTools(invoke: RecipientInvoker = invokeDim) {
       args: { deliveryDigest: tool.schema.string().min(1) }, async execute(args, context) {
         return JSON.stringify(await invoke(context.sessionID, RecipientOperationSchema.parse({ kind: 'ack', ...args }), context.abort));
       } }),
-    workhub_result: tool({ description: 'Report a source/context-bound verification result with the actual tested commit, artifacts, limitations and evidence. Use a stable submission key; partial/blocked/failed are not passed or human acceptance.',
+    workhub_result: tool({ description: 'Report a checkpoint or final source/context-bound result with criterion evidence, actual tested commit, artifacts and limitations. Use a stable submission key; final prose is not human acceptance.',
       args: {
-        submissionKey: tool.schema.string().min(1).max(200),
+        submissionKey: tool.schema.string().min(1).max(200), kind: tool.schema.enum(['checkpoint', 'final']),
         sourceCommit: tool.schema.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
         contextDigest: tool.schema.string().min(1), outcome: tool.schema.enum(['passed', 'failed', 'partial', 'blocked', 'unspecified']),
         summary: tool.schema.string().min(1).max(32_768), limitations: tool.schema.array(tool.schema.string().max(8192)).max(50),
@@ -44,6 +44,9 @@ export function createWorkHubTools(invoke: RecipientInvoker = invokeDim) {
         artifacts: tool.schema.array(tool.schema.object({ repositoryId: tool.schema.string().min(1),
           sourceCommit: tool.schema.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/), path: tool.schema.string().min(1).max(4096),
           digest: tool.schema.string().optional() })).max(100),
+        criterionEvidence: tool.schema.array(tool.schema.object({ criterionId: tool.schema.string().min(1),
+          status: tool.schema.enum(['satisfied', 'not_satisfied', 'not_verified']),
+          detail: tool.schema.string().min(1).max(8192), referenceIds: tool.schema.array(tool.schema.string().min(1)).max(100) })).max(100),
         evidence: tool.schema.array(tool.schema.object({ origin: tool.schema.literal('agent_claim'),
           detail: tool.schema.string().min(1).max(8192) })).max(100),
       }, async execute(args, context) {
