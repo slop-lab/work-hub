@@ -36,7 +36,7 @@ export class OpenCodeState {
       target.nativeSession.installationId !== expected.installationId ||
       target.nativeSession.providerScope !== expected.providerScope ||
       target.nativeSession.kind !== expected.kind || target.nativeSession.id !== expected.id ||
-      target.nativeSession.incarnation !== undefined || target.controlGrantRef !== `opencode:${target.hubSessionId}` ||
+      target.nativeSession.incarnation !== expected.incarnation || target.controlGrantRef !== `opencode:${target.hubSessionId}` ||
       (binding.attempt && binding.attempt.generation !== target.bindingGeneration)) throw new HubError({
       code: 'opencode_binding_mismatch', category: 'identity_mismatch',
       message: 'The selected native session or binding generation is not current.', retry: 'never',

@@ -136,6 +136,16 @@ test('runtime input requires the recorded control grant in the action context', 
   } finally { await fixture.close(); }
 });
 
+test('recipient incarnation remains part of the exact native session identity during input', async () => {
+	const fixture = await openCodeFixture({ recipient: { hostId: 'host-one',
+		workspaceId: '11111111-1111-4111-8111-111111111111', incarnation: 'container:exact' } });
+	try {
+		await fixture.open();
+		assert.equal(fixture.target.nativeSession.incarnation, 'container:exact');
+		assert.equal((await fixture.connector.startAttempt(context('recipient-start'), fixture.input)).status, 'confirmed');
+	} finally { await fixture.close(); }
+});
+
 test('verification handoff sends the canonical rendered instruction rather than snapshot JSON', async () => {
   const fixture = await openCodeFixture();
   try {
