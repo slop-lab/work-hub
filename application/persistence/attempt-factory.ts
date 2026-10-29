@@ -33,10 +33,11 @@ export class AttemptFactory {
     this.database.prepare(`INSERT INTO sessions
       (id, workspace_id, project_id, task_id, revision, runtime_installation_id,
        native_identity_key, lifecycle, control_mode, binding_generation, capabilities_json,
-       created_at, updated_at)
-      VALUES (?, ?, ?, ?, 1, ?, ?, 'opening', ?, 1, '{}', ?, ?)`).run(
+       profile_id,profile_revision,created_at, updated_at)
+      VALUES (?, ?, ?, ?, 1, ?, ?, 'opening', ?, 1, '{}', ?, ?, ?, ?)`).run(
       id, input.workspaceId, input.task.projectId, input.task.id,
-      input.profile.runtimeInstallationId, input.nativeIdentityKey, input.controlMode, now, now,
+      input.profile.runtimeInstallationId, input.nativeIdentityKey, input.controlMode,
+      input.profile.id,input.profile.revision,now,now,
     );
     return this.execution.getSession(input.workspaceId, id);
   }
@@ -145,10 +146,11 @@ export class AttemptFactory {
     this.database.prepare(`INSERT INTO sessions
       (id, workspace_id, project_id, task_id, revision, runtime_installation_id,
        lifecycle, control_mode, binding_generation, active_attempt_id, capabilities_json,
-       predecessor_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 1, ?, 'opening', 'control', 1, ?, '{}', ?, ?, ?)`).run(
+       predecessor_id,profile_id,profile_revision,created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, 'opening', 'control', 1, ?, '{}', ?, ?, ?, ?, ?)`).run(
       sessionId, input.workspaceId, input.task.projectId, input.task.id,
-      input.profile.runtimeInstallationId, attemptId, input.predecessor.sessionId, now, now,
+      input.profile.runtimeInstallationId, attemptId, input.predecessor.sessionId,
+      input.profile.id,input.profile.revision,now,now,
     );
     this.database.prepare(`INSERT INTO attempts
       (id, workspace_id, task_id, session_id, profile_id, profile_revision, role, origin,

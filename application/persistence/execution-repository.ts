@@ -16,6 +16,7 @@ const objectSchema = z.record(z.string(), z.unknown());
 const sessionRowSchema = z.strictObject({
   id: z.string(), workspaceId: z.string(), projectId: z.string(), taskId: z.string(),
   revision: z.number(), runtimeInstallationId: z.string(), nativeIdentityKey: z.string().nullable(),
+  profileId: z.string().nullable(), profileRevision: z.number().nullable(),
   lifecycle: z.union([z.literal("opening"), z.literal("open"), z.literal("closed")]),
   controlMode: z.union([z.literal("observe"), z.literal("control")]),
   bindingGeneration: z.number(), activeAttemptId: z.string().nullable(), predecessorId: z.string().nullable(),
@@ -54,6 +55,8 @@ function toSession(row: unknown): SessionView {
     id: value.id, workspaceId: value.workspaceId, projectId: value.projectId,
     taskId: value.taskId, revision: value.revision,
     runtimeInstallationId: value.runtimeInstallationId,
+    ...(value.profileId === null ? {} : { profileId: value.profileId }),
+    ...(value.profileRevision === null ? {} : { profileRevision: value.profileRevision }),
     ...(value.nativeIdentityKey === null ? {} : { nativeIdentityKey: value.nativeIdentityKey }),
     lifecycle: value.lifecycle, controlMode: value.controlMode,
     bindingGeneration: value.bindingGeneration,
@@ -84,6 +87,7 @@ function toAttempt(row: unknown): AttemptView {
 const sessionSelect = `SELECT id, workspace_id AS workspaceId, project_id AS projectId,
   task_id AS taskId, revision, runtime_installation_id AS runtimeInstallationId,
   native_identity_key AS nativeIdentityKey, lifecycle, control_mode AS controlMode,
+  profile_id AS profileId, profile_revision AS profileRevision,
   binding_generation AS bindingGeneration, active_attempt_id AS activeAttemptId, predecessor_id AS predecessorId,
   capabilities_json AS capabilitiesJson, created_at AS createdAt, updated_at AS updatedAt FROM sessions`;
 const attemptSelect = `SELECT id, workspace_id AS workspaceId, task_id AS taskId,
@@ -167,9 +171,11 @@ export class ExecutionRepository {
     this.database.prepare(`INSERT INTO sessions
       (id, workspace_id, project_id, task_id, revision, runtime_installation_id,
         lifecycle, control_mode, binding_generation, active_attempt_id, capabilities_json, predecessor_id,
-        created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, 'opening', 'control', 1, ?, '{}', ?, ?, ?)`)
+        profile_id,profile_revision,created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, 'opening', 'control', 1, ?, '{}', ?, ?, ?, ?, ?)`)
       .run(sessionId, input.task.workspaceId, input.task.projectId, input.task.id,
-        input.profile.runtimeInstallationId, attemptId, predecessor?.sessionId ?? null, now, now);
+        input.profile.runtimeInstallationId, attemptId, predecessor?.sessionId ?? null,
+        input.profile.id,input.profile.revision,now,now);
     this.database.prepare(`INSERT INTO attempts
       (id, workspace_id, task_id, session_id, profile_id, profile_revision, role, origin,
        phase, observation, input_snapshot_json, unresolved, business_intent_epoch, created_at, updated_at)
