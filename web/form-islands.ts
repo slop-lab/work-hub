@@ -36,6 +36,11 @@ function isEditableControl(value: Element): value is EditableControl {
 	return value instanceof HTMLInputElement || value instanceof HTMLTextAreaElement || value instanceof HTMLSelectElement;
 }
 
+function supportsSelection(control: EditableControl): control is HTMLInputElement | HTMLTextAreaElement {
+	return control instanceof HTMLTextAreaElement || control instanceof HTMLInputElement &&
+		["text", "search", "tel", "url", "password"].includes(control.type);
+}
+
 function formControls(form: HTMLFormElement): readonly { readonly control: EditableControl; readonly key: string }[] {
 	const counts = new Map<string, number>();
 	return [...form.elements].filter((element): element is EditableControl => isEditableControl(element) && element.name.length > 0).map((control) => {
@@ -165,6 +170,8 @@ export function restoreDirtyForms(root: HTMLElement, identity: string, islands: 
 		const focused = controls.find((item) => item.key === island.focus?.key)?.control;
 		if (focused === undefined) continue;
 		focused.focus({ preventScroll: true });
-		if ((focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) && island.focus.selectionStart !== undefined && island.focus.selectionEnd !== undefined) focused.setSelectionRange(island.focus.selectionStart, island.focus.selectionEnd);
+		if (supportsSelection(focused) && island.focus.selectionStart !== undefined && island.focus.selectionEnd !== undefined) {
+			focused.setSelectionRange(island.focus.selectionStart, island.focus.selectionEnd);
+		}
 	}
 }
