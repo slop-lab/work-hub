@@ -61,7 +61,19 @@ export class FakeCodexProtocol implements CodexProtocol {
   trackSubmission(_threadId: string, _clientId: string): void {}
   trackAcceptedTurn(_threadId: string, _clientId: string, _turnId: string): void {}
   forgetSubmission(_threadId: string, _clientId: string): void {}
-  drainEvents(): readonly CodexProtocolEvent[] { return this.events.splice(0); }
+  drainEvents(threadId: string): readonly CodexProtocolEvent[] {
+    const consumed: CodexProtocolEvent[] = [];
+    const retained: CodexProtocolEvent[] = [];
+    for (const event of this.events) {
+      const eventThreadId = event.params && typeof event.params === 'object' && 'threadId' in event.params
+        ? event.params.threadId : undefined;
+      if (typeof eventThreadId !== 'string' || eventThreadId === threadId) consumed.push(event);
+      else retained.push(event);
+    }
+    this.events.length = 0;
+    this.events.push(...retained);
+    return consumed;
+  }
   queueServerRequest(event: CodexProtocolEvent & { readonly nativeRequestId: string }): void {
     this.events.push(event); this.serverRequests.set(event.nativeRequestId, event);
   }

@@ -45,7 +45,7 @@ test('Codex notification retention remains bounded during a provider flood', asy
   const setup = await protocol(fixture);
   try {
     await setup.client.request('test/notifications', {});
-    const events = setup.client.drainEvents();
+    const events = setup.client.drainEvents('thread-1');
     assert.ok(events.length <= 256);
     assert.equal(events.at(-1)?.method, 'test/event');
   } finally { await cleanup(setup); }
@@ -55,7 +55,7 @@ test('Codex transport retains exact retry and rate-limit notifications for lifec
   const setup = await protocol(fixture);
   try {
     await setup.client.request('test/lifecycle-notifications', { threadId: 'thread-1', turnId: 'turn-1' });
-    const events = setup.client.drainEvents();
+    const events = setup.client.drainEvents('thread-1');
     assert.deepEqual(events.map((event) => event.method), ['error', 'account/rateLimits/updated']);
     assert.deepEqual(events[0]?.params, { threadId: 'thread-1', turnId: 'turn-1', willRetry: true,
       error: { message: 'retry', codexErrorInfo: 'serverOverloaded', additionalDetails: null, misalignment: null } });

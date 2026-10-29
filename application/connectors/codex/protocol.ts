@@ -15,7 +15,7 @@ export interface CodexProtocol {
   trackSubmission(threadId: string, clientId: string): void;
   trackAcceptedTurn(threadId: string, clientId: string, turnId: string): void;
   forgetSubmission(threadId: string, clientId: string): void;
-  drainEvents(): readonly CodexProtocolEvent[];
+  drainEvents(threadId: string): readonly CodexProtocolEvent[];
   pendingServerRequests(): readonly CodexProtocolEvent[];
   respondServerRequest(nativeRequestId: string, result: unknown): Promise<void>;
   close(): Promise<void>;
@@ -25,7 +25,7 @@ type Pending = { readonly method: string; readonly resolve: (value: unknown) => 
 type TrackedTurn = { readonly threadId: string; readonly clientId: string; readonly turnId?: string };
 const MAX_STDOUT_LINE_BYTES = 1024 * 1024;
 const MAX_NOTIFICATIONS = 256;
-const MAX_SERVER_REQUESTS = 32;
+const MAX_SERVER_REQUESTS = 32; const eventThreadSchema = z.object({ threadId: z.string() });
 type ServerRequest = { readonly id: string | number; readonly event: CodexProtocolEvent };
 
 export class CodexProtocolError extends Error {
@@ -219,7 +219,12 @@ export class CodexAppServerProtocol implements CodexProtocol {
       if (this.trackedTurns.size > 0) await new Promise<void>((resolve) => setTimeout(resolve, 50));
     }
   }
-  drainEvents(): readonly CodexProtocolEvent[] { return this.events.splice(0); }
+  drainEvents(threadId: string): readonly CodexProtocolEvent[] {
+    const consumed: CodexProtocolEvent[] = [];
+    for (const event of this.events.splice(0)) { const scope = eventThreadSchema.safeParse(event.params);
+      if (!scope.success || scope.data.threadId === threadId) consumed.push(event); else this.events.push(event); }
+    return consumed;
+  }
   pendingServerRequests(): readonly CodexProtocolEvent[] { return [...this.serverRequests.values()].map((request) => request.event); }
   async respondServerRequest(nativeRequestId: string, result: unknown): Promise<void> {
     this.assertAccepting();
