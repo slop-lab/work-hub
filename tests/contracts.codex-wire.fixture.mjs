@@ -11,6 +11,7 @@ if (process.argv.includes('--version')) {
 const methods = [];
 let threadReadCount = 0;
 const turns = [];
+let pendingQuestionRequestId;
 const thread = () => ({ id: '01900000-0000-7000-8000-000000000001', sessionId: '01900000-0000-7000-8000-000000000001',
   ephemeral: false, cwd: process.cwd(), modelProvider: 'openai', model: 'fixture', cliVersion: '0.164.0',
   status: { type: turns.some((turn) => turn.status === 'inProgress') ? 'active' : 'idle', activeFlags: [] },
@@ -21,6 +22,11 @@ process.on('SIGTERM', () => {
 });
 for await (const line of createInterface({ input: process.stdin })) {
   const message = JSON.parse(line);
+  if (message.id === 'fixture-question' && message.result !== undefined) {
+    process.stdout.write(`${JSON.stringify({ id: pendingQuestionRequestId, result: message.result })}\n`);
+    pendingQuestionRequestId = undefined;
+    continue;
+  }
   methods.push(message.method);
   if (message.id === undefined) continue;
   if (message.method === 'initialize') process.stdout.write(`${JSON.stringify({ id: message.id, result: { userAgent: 'fixture' } })}\n`);
@@ -32,6 +38,25 @@ for await (const line of createInterface({ input: process.stdin })) {
     for (let index = 0; index < 400; index += 1) process.stdout.write(`${JSON.stringify({ method: 'test/event', params: { index } })}\n`);
     process.stdout.write(`${JSON.stringify({ id: message.id, result: {} })}\n`);
   }
+  else if (message.method === 'test/lifecycle-notifications') {
+    process.stdout.write(`${JSON.stringify({ method: 'error', params: { threadId: message.params.threadId,
+      turnId: message.params.turnId, willRetry: true, error: { message: 'retry', codexErrorInfo: 'serverOverloaded',
+        additionalDetails: null, misalignment: null } } })}\n`);
+    process.stdout.write(`${JSON.stringify({ method: 'account/rateLimits/updated', params: { rateLimits: {
+      limitId: 'codex', limitName: 'Codex', normalModelSlug: 'fixture', primary: { usedPercent: 75,
+        windowDurationMins: 300, resetsAt: 120 }, secondary: null, credits: null, individualLimit: null,
+      spendControlReached: null, planType: null, rateLimitReachedType: null } } })}\n`);
+    process.stdout.write(`${JSON.stringify({ id: message.id, result: {} })}\n`);
+  }
+  else if (message.method === 'test/server-question') {
+    pendingQuestionRequestId = message.id;
+    process.stdout.write(`${JSON.stringify({ id: 'fixture-question', method: 'item/tool/requestUserInput', params: {
+      threadId: message.params.threadId, turnId: message.params.turnId, itemId: 'question-item', isBlocking: true,
+      autoResolutionMs: null, questions: [{ id: 'question-1', header: 'Choice', question: 'Pick one',
+        isOther: false, isSecret: false, options: [{ label: 'Alpha', description: 'First' }] }],
+    } })}\n`);
+  }
+  else if (message.method === 'test/exit') process.exit(7);
   else if (message.method === 'turn/start') {
     const turn = { id: '01900000-0000-7000-8000-000000000002', status: 'inProgress', startedAt: 2, completedAt: null,
       error: null, items: [{ type: 'userMessage', id: 'user-1', clientId: message.params.clientUserMessageId, content: message.params.input }] };

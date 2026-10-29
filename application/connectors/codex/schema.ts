@@ -15,7 +15,8 @@ export const codexSelectionSchema = z.strictObject({ agent: z.literal('codex'),
   model: z.strictObject({ providerID: z.string().min(1), modelID: z.string().min(1) }), projectId: z.string().min(1) });
 const threadStatusSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('notLoaded') }), z.object({ type: z.literal('idle') }),
-  z.object({ type: z.literal('systemError') }), z.object({ type: z.literal('active'), activeFlags: z.array(z.unknown()).optional() }),
+  z.object({ type: z.literal('systemError') }), z.object({ type: z.literal('active'),
+    activeFlags: z.array(z.enum(['waitingOnApproval', 'waitingOnUserInput'])) }),
 ]);
 export const userMessageSchema = z.object({ type: z.literal('userMessage'), id: z.string(), clientId: z.string().nullable(),
   content: z.array(z.object({ type: z.literal('text'), text: z.string() }).passthrough()) });
@@ -40,6 +41,25 @@ export const modelListResponseSchema = z.object({
 });
 export const threadListResponseSchema = z.object({ data: z.array(threadSchema), nextCursor: z.string().nullable() });
 export const accountReadResponseSchema = z.object({ account: z.unknown().nullable(), requiresOpenaiAuth: z.boolean() });
+const lifecycleItemSchema = z.object({ type: z.string(), id: z.string() }).passthrough();
+export const turnNotificationSchema = z.object({ threadId: z.string(), turn: turnSchema });
+export const itemStartedNotificationSchema = z.object({ threadId: z.string(), turnId: z.string(),
+  item: lifecycleItemSchema, startedAtMs: z.number() });
+export const itemCompletedNotificationSchema = z.object({ threadId: z.string(), turnId: z.string(),
+  item: lifecycleItemSchema, completedAtMs: z.number() });
+export const errorNotificationSchema = z.object({ threadId: z.string(), turnId: z.string(), willRetry: z.boolean(),
+  error: z.object({ codexErrorInfo: z.unknown().nullable() }).passthrough() });
+export const rateLimitsUpdatedNotificationSchema = z.object({ rateLimits: z.object({
+  limitId: z.string().nullable(), primary: z.object({ usedPercent: z.number(), resetsAt: z.number().nullable() }).nullable(),
+}).passthrough() });
+export const threadStatusChangedNotificationSchema = z.object({ threadId: z.string(), status: threadStatusSchema });
+const toolRequestUserInputOptionSchema = z.object({ label: z.string(), description: z.string() });
+const toolRequestUserInputQuestionSchema = z.object({ id: z.string(), header: z.string(), question: z.string(),
+  isOther: z.boolean(), isSecret: z.boolean(), options: z.array(toolRequestUserInputOptionSchema).nullable() });
+export const toolRequestUserInputParamsSchema = z.object({ threadId: z.string(), turnId: z.string(), itemId: z.string(),
+  questions: z.array(toolRequestUserInputQuestionSchema), isBlocking: z.boolean(), autoResolutionMs: z.number().nullable() });
+export const unsupportedServerRequestSchema = z.object({ method: z.string(), reason: z.string(),
+  threadId: z.string().optional(), turnId: z.string().optional() });
 export const bindingSchema = z.object({
   workspaceId: z.string(), nativeId: z.string().uuid(), mode: z.enum(['observe', 'control']), selection: codexSelectionSchema,
   detached: z.boolean(), environmentGrant: EnvironmentUseGrantSchema.nullable(),

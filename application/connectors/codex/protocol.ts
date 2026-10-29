@@ -2,12 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { HubError } from '../../domain/errors.ts';
+import { digest } from '../../persistence/codec.ts';
 import { BoundedLineDecoder, ProtocolLineLimitError } from './protocol-buffer.ts';
-import { threadReadResponseSchema, userMessageSchema, type CodexConnection } from './schema.ts';
+import { threadReadResponseSchema, toolRequestUserInputParamsSchema, userMessageSchema, type CodexConnection } from './schema.ts';
 
 const messageSchema = z.object({ id: z.union([z.string(), z.number()]).optional(), method: z.string().optional(),
   result: z.unknown().optional(), error: z.object({ code: z.number(), message: z.string(), data: z.unknown().optional() }).optional(), params: z.unknown().optional() });
-export type CodexProtocolEvent = { readonly method: string; readonly params: unknown };
+export type CodexProtocolEvent = { readonly method: string; readonly params: unknown; readonly nativeRequestId?: string };
 export interface CodexProtocol {
   request(method: string, params: unknown): Promise<unknown>;
   version(): Promise<string>;
@@ -15,12 +16,16 @@ export interface CodexProtocol {
   trackAcceptedTurn(threadId: string, clientId: string, turnId: string): void;
   forgetSubmission(threadId: string, clientId: string): void;
   drainEvents(): readonly CodexProtocolEvent[];
+  pendingServerRequests(): readonly CodexProtocolEvent[];
+  respondServerRequest(nativeRequestId: string, result: unknown): Promise<void>;
   close(): Promise<void>;
 }
 type Pending = { readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void; readonly timer: NodeJS.Timeout };
 type TrackedTurn = { readonly threadId: string; readonly clientId: string; readonly turnId?: string };
 const MAX_STDOUT_LINE_BYTES = 1024 * 1024;
 const MAX_NOTIFICATIONS = 256;
+const MAX_SERVER_REQUESTS = 32;
+type ServerRequest = { readonly id: string | number; readonly event: CodexProtocolEvent };
 
 export class CodexProtocolError extends Error {
   readonly code: number;
@@ -33,6 +38,7 @@ export class CodexAppServerProtocol implements CodexProtocol {
   private sequence = 0;
   private readonly pending = new Map<number, Pending>();
   private readonly events: CodexProtocolEvent[] = [];
+  private readonly serverRequests = new Map<string, ServerRequest>();
   private readonly trackedTurns = new Map<string, TrackedTurn>();
   private readonly connection: CodexConnection;
   private closing = false;
@@ -72,7 +78,8 @@ export class CodexAppServerProtocol implements CodexProtocol {
         message: 'Codex app-server exited. Inspect the scoped installation and authentication state.', retry: 'read_only_retry' });
       this.failTransport(error); this.process = undefined; this.starting = undefined;
     });
-    await this.rawRequest('initialize', { clientInfo: { name: 'work-hub', title: 'Work Hub', version: '0.3.0' }, capabilities: null });
+    await this.rawRequest('initialize', { clientInfo: { name: 'work-hub', title: 'Work Hub', version: '0.3.0' },
+      capabilities: { experimentalApi: true, requestAttestation: false } });
     await this.write(child, `${JSON.stringify({ method: 'initialized', params: {} })}\n`);
   }
   private transportError(): HubError {
@@ -82,6 +89,7 @@ export class CodexAppServerProtocol implements CodexProtocol {
   private failTransport(error: Error): void {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
     this.pending.clear();
+    this.serverRequests.clear();
   }
   private write(child: ChildProcessWithoutNullStreams, payload: string): Promise<void> {
     return new Promise((resolve, reject) => child.stdin.write(payload, (error) => {
@@ -97,6 +105,30 @@ export class CodexAppServerProtocol implements CodexProtocol {
     try { parsed = messageSchema.parse(JSON.parse(line)); }
     catch (error) { if (error instanceof Error) { this.failTransport(this.transportError()); return; } throw error; }
     if (parsed.id !== undefined && parsed.method !== undefined) {
+      if (parsed.method === 'item/tool/requestUserInput') {
+        const request = toolRequestUserInputParamsSchema.safeParse(parsed.params);
+        const question = request.success ? request.data.questions[0] : undefined;
+        const supported = request.success && request.data.questions.length === 1 && question !== undefined && !question.isSecret &&
+          (question.options === null || (!question.isOther && question.options.length > 0));
+        if (supported && this.serverRequests.size < MAX_SERVER_REQUESTS) {
+          const nativeRequestId = digest({ id: parsed.id, method: parsed.method, params: parsed.params });
+          const event = { method: parsed.method, params: parsed.params, nativeRequestId };
+          this.serverRequests.set(nativeRequestId, { id: parsed.id, event });
+          this.pushEvent(event, true);
+          return;
+        }
+        this.pushEvent({ method: 'workhub/serverRequestUnsupported', params: {
+          method: parsed.method, reason: supported ? 'request_capacity_exceeded' : 'secret_or_multiple_questions',
+          ...(request.success ? { threadId: request.data.threadId, turnId: request.data.turnId } : {}),
+        } }, false);
+      } else if (parsed.method === 'item/commandExecution/requestApproval' ||
+        parsed.method === 'item/fileChange/requestApproval' || parsed.method === 'item/permissions/requestApproval') {
+        const scope = z.object({ threadId: z.string(), turnId: z.string() }).safeParse(parsed.params);
+        this.pushEvent({ method: 'workhub/serverRequestUnsupported', params: {
+          method: parsed.method, reason: 'approval_requires_native_client',
+          ...(scope.success ? { threadId: scope.data.threadId, turnId: scope.data.turnId } : {}),
+        } }, false);
+      }
       this.process?.stdin.write(`${JSON.stringify({ id: parsed.id, error: { code: -32601, message: 'Unsupported client request' } })}\n`);
       return;
     }
@@ -109,9 +141,16 @@ export class CodexAppServerProtocol implements CodexProtocol {
       return;
     }
     if (parsed.method !== undefined) {
-      if (this.events.length === MAX_NOTIFICATIONS) this.events.shift();
-      this.events.push({ method: parsed.method, params: parsed.params });
+      this.pushEvent({ method: parsed.method, params: parsed.params }, false);
     }
+  }
+  private pushEvent(event: CodexProtocolEvent, preserve: boolean): void {
+    if (this.events.length === MAX_NOTIFICATIONS) {
+      const removable = this.events.findIndex((candidate) => candidate.nativeRequestId === undefined);
+      if (removable >= 0) this.events.splice(removable, 1);
+      else if (!preserve) return;
+    }
+    this.events.push(event);
   }
   private rawRequest(method: string, params: unknown): Promise<unknown> {
     const child = this.process;
@@ -178,6 +217,16 @@ export class CodexAppServerProtocol implements CodexProtocol {
     }
   }
   drainEvents(): readonly CodexProtocolEvent[] { return this.events.splice(0); }
+  pendingServerRequests(): readonly CodexProtocolEvent[] { return [...this.serverRequests.values()].map((request) => request.event); }
+  async respondServerRequest(nativeRequestId: string, result: unknown): Promise<void> {
+    this.assertAccepting();
+    const request = this.serverRequests.get(nativeRequestId);
+    const child = this.process;
+    if (!request || !child) throw new HubError({ code: 'codex_native_request_missing', category: 'conflict',
+      message: 'The Codex native request is no longer pending.', retry: 'manual_action' });
+    await this.write(child, `${JSON.stringify({ id: request.id, result })}\n`);
+    this.serverRequests.delete(nativeRequestId);
+  }
   private async finishClose(): Promise<void> {
     const started = this.starting === undefined ? false : await this.starting.then(() => true, () => false);
     const child = this.process;

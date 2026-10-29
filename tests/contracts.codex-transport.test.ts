@@ -51,6 +51,41 @@ test('Codex notification retention remains bounded during a provider flood', asy
   } finally { await cleanup(setup); }
 });
 
+test('Codex transport retains exact retry and rate-limit notifications for lifecycle mapping', async () => {
+  const setup = await protocol(fixture);
+  try {
+    await setup.client.request('test/lifecycle-notifications', { threadId: 'thread-1', turnId: 'turn-1' });
+    const events = setup.client.drainEvents();
+    assert.deepEqual(events.map((event) => event.method), ['error', 'account/rateLimits/updated']);
+    assert.deepEqual(events[0]?.params, { threadId: 'thread-1', turnId: 'turn-1', willRetry: true,
+      error: { message: 'retry', codexErrorInfo: 'serverOverloaded', additionalDetails: null, misalignment: null } });
+  } finally { await cleanup(setup); }
+});
+
+test('Codex transport answers a supported server request with its exact JSON-RPC id', async () => {
+  const setup = await protocol(fixture);
+  try {
+    const result = setup.client.request('test/server-question', { threadId: 'thread-1', turnId: 'turn-1' });
+    let request = setup.client.pendingServerRequests()[0];
+    for (let index = 0; request === undefined && index < 20; index += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      request = setup.client.pendingServerRequests()[0];
+    }
+    assert.equal(request?.method, 'item/tool/requestUserInput');
+    assert.ok(request?.nativeRequestId);
+    await setup.client.respondServerRequest(request.nativeRequestId, { answers: { 'question-1': { answers: ['Alpha'] } } });
+    assert.deepEqual(await result, { answers: { 'question-1': { answers: ['Alpha'] } } });
+  } finally { await cleanup(setup); }
+});
+
+test('Codex transport reconnects after app-server exit without replaying the failed request', async () => {
+  const setup = await protocol(fixture);
+  try {
+    await assert.rejects(setup.client.request('test/exit', {}), /exited/);
+    assert.deepEqual(await setup.client.request('model/list', {}), { data: [], nextCursor: null });
+  } finally { await cleanup(setup); }
+});
+
 test('Codex protocol errors preserve the numeric code but never expose provider text', async () => {
   const setup = await protocol(fixture);
   try {
