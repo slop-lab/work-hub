@@ -74,6 +74,7 @@ export const workCommandSchemas = [
   envelope(
     "result.submit",
     z.strictObject({
+      kind: z.enum(["checkpoint", "final"]).default("final"),
       submissionKey: z.string().trim().min(1).max(512).optional(),
       outcome: VerificationOutcomeSchema.default("unspecified"),
       inputDigest: DigestSchema.optional(),
@@ -97,6 +98,12 @@ export const workCommandSchemas = [
           detail: textSchema,
         }),
       ),
+      criterionEvidence: z.array(z.strictObject({
+        criterionId: idSchema,
+        status: z.enum(["satisfied", "not_satisfied", "not_verified"]),
+        detail: textSchema.min(1),
+        referenceIds: z.array(idSchema).max(100).default([]),
+      })).max(100).default([]),
     }),
   ),
 ] as const;

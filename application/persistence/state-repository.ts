@@ -124,17 +124,22 @@ export class StateRepository {
     const now = this.clock.now().toISOString();
     const attempt = z.strictObject({
       taskId: z.string(), role: z.union([z.literal("primary"), z.literal("observed")]),
-      businessIntentEpoch: z.number(), hasResult: z.number(), phase: z.string(),
+      businessIntentEpoch: z.number(), hasFinalResult: z.number(), phase: z.string(),
+      stopRequestedAt: z.string().nullable(),
     }).parse(this.database.prepare(`SELECT a.task_id AS taskId, a.role,
       a.business_intent_epoch AS businessIntentEpoch, a.phase,
-      EXISTS(SELECT 1 FROM results r WHERE r.attempt_id = a.id) AS hasResult
+      a.stop_requested_at AS stopRequestedAt,
+      EXISTS(SELECT 1 FROM results r WHERE r.attempt_id = a.id AND r.result_kind='final') AS hasFinalResult
       FROM attempts a WHERE a.workspace_id = ? AND a.id = ?`).get(workspaceId, attemptId));
     if (attempt.phase === "finished") return;
-    const establishedOutcome = outcome === "ended_without_result" && attempt.hasResult === 1
+    const establishedOutcome = outcome === "ended_without_result" && attempt.hasFinalResult === 1
       ? "result_submitted" : outcome;
-    this.database.prepare(`UPDATE attempts SET phase = 'finished', outcome = ?,
+    const interruption = establishedOutcome === "failed" ? "crash"
+      : establishedOutcome === "ended_without_result" ? "unknown" : establishedOutcome === "canceled"
+        ? attempt.stopRequestedAt === null ? "provider_stop" : "operator_stop" : null;
+    this.database.prepare(`UPDATE attempts SET phase = 'finished', outcome = ?, interruption_kind=?,
       observation = 'fresh', unresolved = 0, updated_at = ? WHERE workspace_id = ? AND id = ?`)
-      .run(establishedOutcome, now, workspaceId, attemptId);
+      .run(establishedOutcome, interruption, now, workspaceId, attemptId);
     this.database.prepare(`UPDATE reservations SET unresolved = 0, updated_at = ?
       WHERE workspace_id = ? AND owner_attempt_id = ?`).run(now, workspaceId, attemptId);
     if (establishedOutcome === "result_submitted" && attempt.role === "primary") {

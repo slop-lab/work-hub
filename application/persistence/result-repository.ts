@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 
 import type { ResultView } from "../domain/model.ts";
+import type { CriterionEvidenceView } from "../domain/lifecycle-model.ts";
 import type { Clock } from "./codec.ts";
 import { newId, parseJson } from "./codec.ts";
 import { conflict } from "../domain/errors.ts";
@@ -13,6 +14,7 @@ const resultRowSchema = z.strictObject({
   referenceIdsJson: z.string(), evidenceJson: z.string(), artifactsJson: z.string(), outcome: z.enum([
     "passed", "failed", "partial", "blocked", "unspecified",
   ]), submissionKey: z.string().nullable(), submissionDigest: z.string().nullable(),
+  resultKind: z.enum(["checkpoint", "final"]), criterionEvidenceJson: z.string(),
   bindingJson: z.string().nullable(), createdAt: z.string(),
 });
 
@@ -26,6 +28,13 @@ function toResult(row: unknown): ResultView {
     evidence: z.array(objectSchema).parse(parseJson(value.evidenceJson)),
     artifacts: z.array(objectSchema).parse(parseJson(value.artifactsJson)),
     outcome: value.outcome,
+    kind: value.resultKind,
+    criterionEvidence: z.array(z.strictObject({
+      criterionId: z.string(),
+      status: z.enum(["satisfied", "not_satisfied", "not_verified"]),
+      detail: z.string(),
+      referenceIds: z.array(z.string()),
+    })).parse(parseJson(value.criterionEvidenceJson)),
     ...(value.submissionKey === null ? {} : { submissionKey: value.submissionKey }),
     ...(value.bindingJson === null ? {} : { binding: objectSchema.parse(parseJson(value.bindingJson)) }),
     createdAt: value.createdAt,
@@ -37,6 +46,7 @@ const resultSelect = `SELECT id, workspace_id AS workspaceId, task_id AS taskId,
   limitations_json AS limitationsJson, reference_ids_json AS referenceIdsJson,
   evidence_json AS evidenceJson,artifacts_json AS artifactsJson,outcome,
   submission_key AS submissionKey,submission_digest AS submissionDigest,
+  result_kind AS resultKind,criterion_evidence_json AS criterionEvidenceJson,
   binding_json AS bindingJson,created_at AS createdAt FROM results`;
 
 export class ResultRepository {
@@ -54,6 +64,8 @@ export class ResultRepository {
     readonly referenceIds: readonly string[]; readonly evidence: readonly object[];
     readonly artifacts: readonly object[];
     readonly outcome: ResultView["outcome"];
+    readonly kind: ResultView["kind"];
+    readonly criterionEvidence: readonly CriterionEvidenceView[];
     readonly submissionKey?: string;
     readonly submissionDigest?: string;
     readonly binding?: Readonly<Record<string, unknown>>;
@@ -72,12 +84,14 @@ export class ResultRepository {
     this.database.prepare(`INSERT INTO results
       (id, workspace_id, task_id, attempt_id, author_id, summary, limitations_json,
        reference_ids_json,evidence_json,artifacts_json,outcome,submission_key,submission_digest,
-       binding_json,created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       result_kind,criterion_evidence_json,binding_json,created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(id, input.workspaceId, input.taskId, input.attemptId, input.authorId, input.summary,
         JSON.stringify(input.limitations), JSON.stringify(input.referenceIds),
-        JSON.stringify(input.evidence), JSON.stringify(input.artifacts), input.outcome,
-        input.submissionKey ?? null, input.submissionDigest ?? null,
-        input.binding === undefined ? null : JSON.stringify(input.binding), this.clock.now().toISOString());
+         JSON.stringify(input.evidence), JSON.stringify(input.artifacts), input.outcome,
+         input.submissionKey ?? null, input.submissionDigest ?? null,
+         input.kind, JSON.stringify(input.criterionEvidence),
+         input.binding === undefined ? null : JSON.stringify(input.binding), this.clock.now().toISOString());
     return this.get(input.workspaceId, id);
   }
 
@@ -91,6 +105,11 @@ export class ResultRepository {
       .all(workspaceId).map(toResult);
   }
   forTask(workspaceId: string, taskId: string): readonly ResultView[] { return this.database.prepare(`${resultSelect} WHERE workspace_id = ? AND task_id = ? ORDER BY created_at DESC LIMIT 100`).all(workspaceId, taskId).map(toResult); }
+  latestForTask(workspaceId: string, taskId: string): ResultView | undefined {
+    const row = this.database.prepare(`${resultSelect} WHERE workspace_id=? AND task_id=?
+      ORDER BY created_at DESC,id DESC LIMIT 1`).get(workspaceId, taskId);
+    return row === undefined ? undefined : toResult(row);
+  }
   forAttempts(workspaceId: string, attemptIds: readonly string[]): readonly ResultView[] {
     if (attemptIds.length === 0) return [];
     return this.database.prepare(`${resultSelect} WHERE workspace_id = ? AND attempt_id IN (${attemptIds.map(() => '?').join(',')}) ORDER BY created_at DESC LIMIT 100`).all(workspaceId, ...attemptIds).map(toResult);
