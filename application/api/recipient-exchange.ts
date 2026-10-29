@@ -35,6 +35,8 @@ export function recipientExchangeRoutes(input: { readonly hub: Hub; readonly aut
       deliveryDigest: assignment.deliveryDigest, incarnation: assignment.incarnation,
       targetWorkspaceId: assignment.targetWorkspaceId, hostId: assignment.hostId,
       nativeSessionId: request.nativeSessionId,
+      recipientIntegrationKey: integration.recipientIntegrationKey,
+      recipientIntegrationGeneration: integration.recipientIntegrationGeneration,
       allowedCommands: ["request.create", "request.respond", "result.submit", "attempt.report", "bridge.response.ack"],
       expiresAt,
     });

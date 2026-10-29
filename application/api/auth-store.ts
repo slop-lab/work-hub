@@ -17,6 +17,8 @@ export const bridgeScopeSchema = z.strictObject({
   targetWorkspaceId: z.string().uuid().optional(),
   hostId: z.string().min(1).optional(),
   nativeSessionId: z.string().min(1).optional(),
+  recipientIntegrationKey: z.string().min(1).optional(),
+  recipientIntegrationGeneration: z.number().int().positive().optional(),
   allowedCommands: z.array(z.enum(['request.create', 'request.respond', 'result.submit', 'attempt.report', 'bridge.response.ack'])).min(1),
   expiresAt: z.iso.datetime(),
 });
@@ -39,11 +41,19 @@ export const recipientIntegrationSchema = z.strictObject({
   incarnation: z.string().min(1), authorization: z.string().min(16),
 });
 export type RecipientIntegration = z.infer<typeof recipientIntegrationSchema>;
+export type RecipientIntegrationAuthorization = RecipientIntegration & {
+  readonly recipientIntegrationKey: string;
+  readonly recipientIntegrationGeneration: number;
+};
 export class BootstrapError extends Error {}
 
 export class AuthStore {
   readonly db: DatabaseSync;
-  private readonly recipientIntegrations = new Map<string, RecipientIntegration>();
+  private readonly recipientIntegrations = new Map<string, {
+    readonly integration: RecipientIntegration;
+    readonly generation: number;
+  }>();
+  private readonly recipientIntegrationGenerations = new Map<string, number>();
   constructor(path: string, integrations: readonly RecipientIntegration[] = []) {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
@@ -81,11 +91,17 @@ export class AuthStore {
   }
   configureRecipientIntegration(input: RecipientIntegration): string {
     const integration = recipientIntegrationSchema.parse(input);
-    this.recipientIntegrations.set(this.digest(integration.authorization), integration);
+    const key = this.digest(integration.authorization);
+    const generation = (this.recipientIntegrationGenerations.get(key) ?? 0) + 1;
+    this.recipientIntegrationGenerations.set(key, generation);
+    this.recipientIntegrations.set(key, { integration, generation });
     return integration.authorization;
   }
-  authenticateRecipientIntegration(authorization: string): RecipientIntegration | undefined {
-    return this.recipientIntegrations.get(this.digest(authorization));
+  authenticateRecipientIntegration(authorization: string): RecipientIntegrationAuthorization | undefined {
+    const key = this.digest(authorization);
+    const record = this.recipientIntegrations.get(key);
+    return record === undefined ? undefined : { ...record.integration,
+      recipientIntegrationKey: key, recipientIntegrationGeneration: record.generation };
   }
   revokeRecipientIntegration(authorization: string): void {
     this.recipientIntegrations.delete(this.digest(authorization));
@@ -103,10 +119,17 @@ export class AuthStore {
     if (!raw) return undefined;
     const row = credentialSchema.parse(raw);
     if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) return undefined;
+    const scope = row.scope_json ? bridgeScopeSchema.parse(JSON.parse(row.scope_json)) : undefined;
+    if (scope?.recipientIntegrationKey !== undefined) {
+      const integration = this.recipientIntegrations.get(scope.recipientIntegrationKey);
+      if (integration === undefined || integration.generation !== scope.recipientIntegrationGeneration) {
+        return undefined;
+      }
+    }
     return {
       userId: row.user_id,
       kind: row.kind,
-      ...(row.scope_json ? { scope: bridgeScopeSchema.parse(JSON.parse(row.scope_json)) } : {}),
+      ...(scope === undefined ? {} : { scope }),
     };
   }
   revoke(token: string): void {

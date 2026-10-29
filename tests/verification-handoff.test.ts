@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { z } from "zod";
 
 import { AuthStore } from "../application/api/auth-store.ts";
 import { createApplication } from "../application/api/app.ts";
 import { renderVerificationPrompt } from "../application/domain/handoff-prompt.ts";
-import { RecipientIntegrationPromptSchema } from "../application/contracts/handoff.ts";
+import { PromptEnvelopeSchema } from "../application/prompts/index.ts";
 import { admin, createTask, delegateNone, finishAttempt, fixture, member } from "./acceptance-fixture.ts";
 
 const sourceCommit = "a".repeat(40);
@@ -13,7 +14,7 @@ const contextDigest = `sha256:${"b".repeat(64)}`;
 test("canonical prompt renderer reassembles the same preview digest", () => {
   // Given
   const input = {
-    task: { id: "task-1", revision: 7, title: "Verify release", description: "Run native checks." },
+    task: { id: "task-1", revision: 7, scopeRevision: 2, title: "Verify release", description: "Run native checks." },
     repository: { id: "repo-1", projectId: "project-default", canonicalIdentity: "https://example.invalid/org/repo.git", revision: 3 },
     verification: { repositoryId: "repo-1", repositoryRevision: 3, sourceBranch: "work/verify", sourceCommit, requestedValidation: "Ubuntu native verification", contextDigest },
   } as const;
@@ -25,12 +26,9 @@ test("canonical prompt renderer reassembles the same preview digest", () => {
   // Then
   assert.equal(second.promptDigest, first.promptDigest);
   assert.equal(second.prompt, first.prompt);
-  const rendered = JSON.parse(first.prompt) as { readonly recipientIntegration: unknown };
-  assert.deepEqual(RecipientIntegrationPromptSchema.parse(rendered.recipientIntegration), {
-    assignmentTool: "workhub_assignment", acknowledgmentTool: "workhub_ack",
-    resultTool: "workhub_result", assignmentReadRequired: true,
-    deliveryAcknowledgmentRequired: true, humanAcceptanceSeparate: true,
-  });
+  const rendered = PromptEnvelopeSchema.parse(JSON.parse(first.prompt));
+  assert.deepEqual(rendered.template, { id: "verifier_handoff", version: 1 });
+  assert.equal(rendered.authority.taskCompletion, "human_only");
 });
 
 test("preview delegation binds exact repository source context and target identity", async () => {
@@ -86,6 +84,8 @@ test("preview delegation binds exact repository source context and target identi
     const detail = f.hub.getHandoff(member, attemptId);
     assert.equal(detail.preview.previewDigest, preview.previewDigest);
     assert.equal(detail.attempt.inputSnapshot["promptDigest"], preview.promptDigest);
+    assert.equal(z.object({ id: z.string() }).parse(detail.attempt.inputSnapshot["promptTemplate"]).id,
+      "verifier_handoff");
     assert.deepEqual(detail.attempt.inputSnapshot["verification"], preview.verification);
     assert.equal(detail.delivery["status"], "pending");
   } finally {
@@ -100,7 +100,7 @@ test("stale source context and target mismatches reject preview delegation", asy
     const taskId = await createTask(f.hub, "handoff-stale");
     const repository = f.hub.registerProjectRepository(member, {
       projectId: "project-default",
-      canonicalIdentity: "ssh://git@example.invalid/org/repo.git",
+      canonicalIdentity: "https://example.invalid/org/repo-stale.git",
     });
     const preview = f.hub.previewHandoff(member, {
       taskId,
@@ -198,7 +198,7 @@ test("bound result outcome is idempotent while human completion remains separate
     const inputDigest = String(f.hub.getHandoff(member, attemptId).attempt.inputSnapshot["digest"]);
     const command = { commandId: "result-bound", type: "result.submit", target: { kind: "attempt", id: attemptId }, payload: {
       submissionKey: "native-suite:ubuntu", outcome: "partial", inputDigest,
-      actualCommit: sourceCommit, actualContextDigest: contextDigest,
+      actualCommit: sourceCommit, actualContextDigest: preview.verification.contextDigest,
       summary: "Most checks passed.", limitations: ["H264 unavailable"], referenceIds: [], evidence: [{ origin: "agent_claim", detail: "Native suite report" }],
       artifacts: [{ repositoryId: repository.id, sourceCommit, path: "reports/native.json",
         digest: `sha256:${"d".repeat(64)}` }],
@@ -283,6 +283,8 @@ test("recipient exchange accepts only configured integration credentials for the
       body: JSON.stringify({ nativeSessionId: "ses_other" }) });
     assert.notEqual(wrongNative.status, 200);
     auth.revokeRecipientIntegration(integration);
+    const fenced = await app.request("/api/v1/bridge/assignment", { headers: bridgeHeaders });
+    assert.equal(fenced.status, 401);
     const revoked = await app.request("/api/v1/recipient/exchange", { method: "POST",
       headers: { Authorization: `Integration ${integration}`, "Content-Type": "application/json" },
       body: JSON.stringify(body) });
