@@ -23,6 +23,7 @@ const taskRowSchema = z.strictObject({
     z.literal("canceled"),
   ]),
   businessIntentEpoch: z.number(),
+  scopeRevision: z.number(),
   primaryAttemptId: z.string().nullable(),
   archivedAt: z.string().nullable(),
   createdAt: z.string(),
@@ -61,6 +62,7 @@ function toTask(row: unknown): TaskView {
     ...(value.ownerId === null ? {} : { ownerId: value.ownerId }),
     status: value.status,
     businessIntentEpoch: value.businessIntentEpoch,
+    scopeRevision: value.scopeRevision,
     ...(value.primaryAttemptId === null ? {} : { primaryAttemptId: value.primaryAttemptId }),
     ...(value.archivedAt === null ? {} : { archivedAt: value.archivedAt }),
     createdAt: value.createdAt,
@@ -71,6 +73,7 @@ function toTask(row: unknown): TaskView {
 const taskSelect = `SELECT id, workspace_id AS workspaceId, project_id AS projectId,
   revision, title, description, expected_outcome AS expectedOutcome, priority,
   owner_id AS ownerId, status, business_intent_epoch AS businessIntentEpoch,
+  scope_revision AS scopeRevision,
   primary_attempt_id AS primaryAttemptId, archived_at AS archivedAt,
   created_at AS createdAt, updated_at AS updatedAt FROM tasks`;
 
