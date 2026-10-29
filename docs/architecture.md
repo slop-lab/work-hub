@@ -114,6 +114,6 @@ not claims unless accompanied by measurements and the test envelope.
 
 ## Deliberately deferred
 
-Additional runtime adapters and production qualification, terminal/native gateways, workflows,
-automatic reviews/retries/merge, IDE tooling, infrastructure management, external
+Production qualification, terminal/native gateways, automatic merge/deploy approval,
+IDE tooling, infrastructure management, external
 tracker sync and multi-tenant SaaS. Connector conformance is not live readiness.

@@ -125,6 +125,7 @@ excluded from work exports; do not paste secrets into task text or runtime outpu
 - [Executed verification and limits](docs/verification.md)
 - [Repository quality gates](docs/quality-gates.md)
 - [Runtime adapters and optional integrations](docs/live-integration.md)
+- [Reliable lifecycle and provider capability mappings](docs/reliable-lifecycle.md)
 - [Integration verification procedure](docs/integration-verification.md)
 
 Production qualification, terminal gateways, workflows, automatic prompt retries,
