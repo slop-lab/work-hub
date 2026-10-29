@@ -28,7 +28,7 @@ function criteriaHistory(lifecycle: TaskLifecycle): HTMLElement {
 				"article",
 				{ class: "lifecycle-row" },
 				el("div", { class: "cluster" }, badge(criterion.key), badge(criterion.requirement, criterion.requirement === "required" ? "warning" : "neutral"), badge(`${criterion.verification} verification`, criterion.verification === "required" ? "info" : "neutral"), criterion.supersededByCriterionId === undefined ? null : badge("superseded")),
-				el("p", {}, criterion.description),
+				el("p", { class: "lifecycle-criterion-copy" }, criterion.description),
 				el("span", { class: "mono" }, criterion.id),
 			))),
 		lifecycle.amendments.length === 0 ? null : el("details", {}, el("summary", {}, `${lifecycle.amendments.length} scope amendment${lifecycle.amendments.length === 1 ? "" : "s"}`), el("div", { class: "lifecycle-rows" }, ...lifecycle.amendments.map((amendment) => el("article", { class: "lifecycle-row" }, el("strong", {}, `Revision ${amendment.revision}`), el("p", {}, amendment.summary), el("span", { class: "mono" }, amendment.id))))),

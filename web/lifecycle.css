@@ -71,6 +71,11 @@
 	border-block-start: 1px solid var(--color-border);
 }
 
+.lifecycle-criterion-copy {
+	word-break: keep-all;
+	overflow-wrap: break-word;
+}
+
 .lifecycle-form,
 .lifecycle-inline-form {
 	display: grid;
