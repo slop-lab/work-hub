@@ -47,6 +47,35 @@ export function bridgeRoutes(hub: Hub) {
     const requests = hub.agentRequests(runtimeActor(c));
     return c.json({ items: requests, bindingGeneration: scope.bindingGeneration });
   });
+  app.get('/assignment', (c) => {
+    const scope = runtimeScope(c);
+    if (scope.installationId === undefined || scope.incarnation === undefined ||
+      scope.nativeSessionDigest === undefined || scope.deliveryDigest === undefined ||
+      scope.targetWorkspaceId === undefined || scope.hostId === undefined ||
+      scope.nativeSessionId === undefined) {
+      throw forbidden('This bridge credential has no recipient assignment binding.');
+    }
+    const assignment = hub.recipientAssignment({ workHubWorkspaceId: scope.workspaceId,
+      targetWorkspaceId: scope.targetWorkspaceId, installationId: scope.installationId,
+      hostId: scope.hostId, incarnation: scope.incarnation,
+      nativeSessionId: scope.nativeSessionId });
+    if (assignment.nativeSessionDigest !== scope.nativeSessionDigest ||
+      assignment.deliveryDigest !== scope.deliveryDigest) {
+      throw forbidden('Recipient assignment identity changed after token issuance.');
+    }
+    return c.json(assignment);
+  });
+  app.post('/attempt-delivery/ack', async (c) => {
+    const scope = runtimeScope(c);
+    const body = z.strictObject({ deliveryDigest: z.string().min(1) }).parse(await c.req.json<unknown>());
+    if (scope.deliveryDigest === undefined || body.deliveryDigest !== scope.deliveryDigest) {
+      throw forbidden('Delivery acknowledgment differs from credential scope.');
+    }
+    hub.acknowledgeAttemptDelivery(runtimeActor(c), {
+      attemptId: scope.attemptId, deliveryDigest: body.deliveryDigest,
+    });
+    return c.json({ status: 'acknowledged', attemptId: scope.attemptId, deliveryDigest: body.deliveryDigest });
+  });
   app.get('/requests/:id', (c) => {
     const scope = runtimeScope(c);
     const request = hub.getRequest(runtimeActor(c), c.req.param('id'));
