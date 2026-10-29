@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT NOT NULL, default_profile_id TEXT, archived_at TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_repositories (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL,
+  canonical_identity TEXT NOT NULL, revision INTEGER NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  UNIQUE(workspace_id, project_id, canonical_identity)
+);
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL,
   revision INTEGER NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
@@ -81,6 +87,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   native_identity_key TEXT, lifecycle TEXT NOT NULL, control_mode TEXT NOT NULL,
   binding_generation INTEGER NOT NULL, active_attempt_id TEXT,
   capabilities_json TEXT NOT NULL, predecessor_id TEXT,
+  profile_id TEXT, profile_revision INTEGER,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS sessions_native_identity_unique
@@ -98,6 +105,19 @@ CREATE TABLE IF NOT EXISTS attempts (
   predecessor_id TEXT, unresolved INTEGER NOT NULL, stop_requested_at TEXT,
   native_execution_ref_json TEXT, observation_ended_at TEXT,
   business_intent_epoch INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS handoff_previews (
+  preview_digest TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  task_revision INTEGER NOT NULL, profile_id TEXT NOT NULL, profile_revision INTEGER NOT NULL,
+  repository_id TEXT NOT NULL, repository_revision INTEGER NOT NULL,
+  verification_json TEXT NOT NULL, recipient_json TEXT NOT NULL,
+  target_json TEXT NOT NULL, prompt TEXT NOT NULL, prompt_digest TEXT NOT NULL, attempt_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS attempt_deliveries (
+  attempt_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, delivery_digest TEXT NOT NULL,
+  status TEXT NOT NULL, input_receipt_json TEXT, last_error_json TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS attempts_task_primary_unique
   ON attempts(task_id) WHERE role = 'primary' AND unresolved = 1;
@@ -122,8 +142,12 @@ CREATE TABLE IF NOT EXISTS results (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
   attempt_id TEXT NOT NULL, author_id TEXT NOT NULL, summary TEXT NOT NULL,
   limitations_json TEXT NOT NULL, reference_ids_json TEXT NOT NULL,
-  evidence_json TEXT NOT NULL, created_at TEXT NOT NULL
+  evidence_json TEXT NOT NULL, artifacts_json TEXT NOT NULL DEFAULT '[]',
+  outcome TEXT NOT NULL DEFAULT 'unspecified', submission_key TEXT,
+  submission_digest TEXT, binding_json TEXT, created_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS results_attempt_submission_unique
+  ON results(attempt_id, submission_key) WHERE submission_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS references_store (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT,
   kind TEXT NOT NULL, title TEXT NOT NULL, mime_type TEXT,
@@ -231,6 +255,35 @@ export function migrate(database: DatabaseSync): void {
   }
   if (!attemptColumns.some((column) => Reflect.get(column, "name") === "observation_ended_at")) {
     database.exec("ALTER TABLE attempts ADD COLUMN observation_ended_at TEXT");
+  }
+  const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
+  if (!sessionColumns.some((column) => Reflect.get(column, "name") === "profile_id")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN profile_id TEXT");
+  }
+  if (!sessionColumns.some((column) => Reflect.get(column, "name") === "profile_revision")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN profile_revision INTEGER");
+  }
+  const resultColumns = database.prepare("PRAGMA table_info(results)").all();
+  if (!resultColumns.some((column) => Reflect.get(column, "name") === "outcome")) {
+    database.exec("ALTER TABLE results ADD COLUMN outcome TEXT NOT NULL DEFAULT 'unspecified'");
+  }
+  if (!resultColumns.some((column) => Reflect.get(column, "name") === "submission_key")) {
+    database.exec("ALTER TABLE results ADD COLUMN submission_key TEXT");
+  }
+  if (!resultColumns.some((column) => Reflect.get(column, "name") === "binding_json")) {
+    database.exec("ALTER TABLE results ADD COLUMN binding_json TEXT");
+  }
+  if (!resultColumns.some((column) => Reflect.get(column, "name") === "artifacts_json")) {
+    database.exec("ALTER TABLE results ADD COLUMN artifacts_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!resultColumns.some((column) => Reflect.get(column, "name") === "submission_digest")) {
+    database.exec("ALTER TABLE results ADD COLUMN submission_digest TEXT");
+  }
+  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS results_attempt_submission_unique
+    ON results(attempt_id, submission_key) WHERE submission_key IS NOT NULL`);
+  const previewColumns = database.prepare("PRAGMA table_info(handoff_previews)").all();
+  if (!previewColumns.some((column) => Reflect.get(column, "name") === "target_json")) {
+    database.exec("ALTER TABLE handoff_previews ADD COLUMN target_json TEXT NOT NULL DEFAULT '{}'");
   }
 }
 
