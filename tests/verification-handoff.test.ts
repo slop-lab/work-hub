@@ -240,7 +240,7 @@ test("recipient exchange accepts only configured integration credentials for the
     const targetWorkspaceId = "11111111-1111-4111-8111-111111111111";
     const integration = auth.configureRecipientIntegration({ installationId: session.runtimeInstallationId,
       hostId: "host-1", workHubWorkspaceId: admin.workspaceId, targetWorkspaceId,
-      incarnation, authorization: "Bearer integration-secret" });
+      incarnation, authorization: "integration-secret-long" });
     const app = createApplication({ hub: f.hub, auth, origin: "http://localhost:3000", secureCookies: false });
     const userToken = auth.bootstrap("user-admin");
     const nativeSessionId = (JSON.parse(session.nativeIdentityKey) as { readonly id: string }).id;
@@ -248,10 +248,14 @@ test("recipient exchange accepts only configured integration credentials for the
 
     // When
     const denied = await app.request("/api/v1/recipient/exchange", { method: "POST", headers: { Authorization: `Bearer ${userToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const exchanged = await app.request("/api/v1/recipient/exchange", { method: "POST", headers: { Authorization: integration, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const rawDenied = await app.request("/api/v1/recipient/exchange", { method: "POST",
+      headers: { Authorization: integration, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const exchanged = await app.request("/api/v1/recipient/exchange", { method: "POST",
+      headers: { Authorization: `Integration ${integration}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
     // Then
     assert.equal(denied.status, 403);
+    assert.equal(rawDenied.status, 403);
     assert.equal(exchanged.status, 200, await exchanged.clone().text());
     const payload = await exchanged.json() as { readonly token: string; readonly expiresAt: string;
       readonly assignment: { readonly attemptId: string; readonly workHubWorkspaceId: string;
@@ -269,12 +273,12 @@ test("recipient exchange accepts only configured integration credentials for the
     assert.equal(acknowledged.status, 200);
     assert.equal(f.hub.getHandoff(admin, attemptId).delivery["status"], "acknowledged");
     const wrongNative = await app.request("/api/v1/recipient/exchange", { method: "POST",
-      headers: { Authorization: integration, "Content-Type": "application/json" },
+      headers: { Authorization: `Integration ${integration}`, "Content-Type": "application/json" },
       body: JSON.stringify({ nativeSessionId: "ses_other" }) });
     assert.notEqual(wrongNative.status, 200);
     auth.revokeRecipientIntegration(integration);
     const revoked = await app.request("/api/v1/recipient/exchange", { method: "POST",
-      headers: { Authorization: integration, "Content-Type": "application/json" },
+      headers: { Authorization: `Integration ${integration}`, "Content-Type": "application/json" },
       body: JSON.stringify(body) });
     assert.equal(revoked.status, 403);
   } finally {

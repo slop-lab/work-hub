@@ -12,8 +12,9 @@ export function recipientExchangeRoutes(input: { readonly hub: Hub; readonly aut
   const app = new Hono();
   app.post("/recipient/exchange", async (context) => {
     const authorization = context.req.header("Authorization");
-    const integration = authorization === undefined
-      ? undefined : input.auth.authenticateRecipientIntegration(authorization);
+    const credential = authorization?.startsWith("Integration ") ? authorization.slice("Integration ".length) : undefined;
+    const integration = credential === undefined
+      ? undefined : input.auth.authenticateRecipientIntegration(credential);
     if (integration === undefined) {
       return context.json({ error: { code: "integration_credential_required",
         message: "A configured recipient integration credential is required." } }, 403);
