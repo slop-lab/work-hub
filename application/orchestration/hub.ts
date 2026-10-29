@@ -1,56 +1,28 @@
-import type { AgentRuntimeConnector, ExecutionConnector } from "../contracts/index.ts";
 import type { Actor } from "../domain/authorization.ts";
 import { parseHubCommand } from "../domain/commands.ts";
-import { unsupported } from "../domain/errors.ts";
 import type { HubCommandReceipt, HubSnapshot } from "../domain/model.ts";
-import { AttemptFactory } from "../persistence/attempt-factory.ts";
-import type { Clock } from "../persistence/codec.ts";
 import { Store } from "../persistence/database.ts";
-import { EnvironmentRepository } from "../persistence/environment-repository.ts";
-import { ExecutionRepository } from "../persistence/execution-repository.ts";
-import { InteractionRepository } from "../persistence/interaction-repository.ts";
-import { OperationRepository } from "../persistence/operation-repository.ts";
-import { ObservationRepository } from "../persistence/observation-repository.ts";
-import { QueryRepository } from "../persistence/query-repository.ts";
-import { ResultRepository } from "../persistence/result-repository.ts";
-import { StateRepository } from "../persistence/state-repository.ts";
-import { WorkRepository } from "../persistence/work-repository.ts";
 import { CommandService } from "../commands/service.ts";
-import { ContinuationHandler } from "../commands/continuation-handler.ts";
-import { ExecutionHandler } from "../commands/execution-handler.ts";
-import { InteractionHandler } from "../commands/interaction-handler.ts";
-import { WorkHandler } from "../commands/work-handler.ts";
 import { Administration, adminCommandSchema } from "../administration/index.ts";
 import { exportSafeRecords } from "../artifacts/export.ts";
 import { ReferenceRepository } from '../artifacts/references.ts';
 import { ExternalCaptureService, type ExternalCapture, type ExternalCaptureRequest,
   type ExternalCaptureSelection } from '../artifacts/external-capture.ts';
 import { EventRepository } from '../persistence/events.ts';
-import { createSimulators } from "../simulator/index.ts";
-import type { RuntimeProfile, SimulatorCallLog, SimulatorControls, Simulators } from "../simulator/index.ts";
-import { ConnectorRegistry, type ConnectorSet } from "./connectors.ts";
-import { DelegationWorker } from "./delegation-worker.ts";
-import { ExecutionWorker } from "./execution-worker.ts";
+import type { SimulatorCallLog, SimulatorControls, Simulators } from "../simulator/index.ts";
 import { QueryService, type ContextQuery, type TaskListQuery } from "./query-service.ts";
-import { ReconcileWorker } from "./reconcile-worker.ts";
-import { RuntimeWorker } from "./runtime-worker.ts";
 import { OrchestrationWorker } from "./worker.ts";
 import { BridgeQueries, type RuntimeScope } from './bridge-queries.ts';
+import { HandoffService, type HandoffPreviewRequest, type RecipientAssignmentRequest,
+  type RegisterRepositoryRequest } from "./handoff-service.ts";
+import { createHubRuntime, type HubRuntimeOptions } from "./hub-runtime.ts";
 
 export type { Actor } from "../domain/authorization.ts";
 export type { HubCommand } from "../domain/commands.ts";
 export type { HubCommandReceipt, HubSnapshot } from "../domain/model.ts";
 export type { TaskListQuery } from "./query-service.ts";
 
-export type HubOptions = {
-  readonly clock?: Clock;
-  readonly mode?: "simulator" | "external";
-  readonly runtimeProfile?: RuntimeProfile;
-  readonly connectors?: {
-    readonly execution?: Readonly<Record<string, ExecutionConnector>>;
-    readonly runtime?: Readonly<Record<string, AgentRuntimeConnector>>;
-  };
-};
+export type HubOptions = HubRuntimeOptions;
 
 export class Hub {
   readonly readiness: {
@@ -72,123 +44,20 @@ export class Hub {
   private readonly references: ReferenceRepository;
   private readonly externalCapture: ExternalCaptureService;
   private readonly eventLog: EventRepository;
+  private readonly handoffService: HandoffService;
 
   constructor(path: string, options: HubOptions = {}) {
     this.store = options.clock === undefined ? new Store(path) : new Store(path, options.clock);
     this.references = new ReferenceRepository(this.store);
     this.externalCapture = new ExternalCaptureService(this.store);
     this.eventLog = new EventRepository(this.store.database);
-    const work = new WorkRepository(this.store.database, this.store.clock);
-    const interactions = new InteractionRepository(this.store.database, this.store.clock);
-    const execution = new ExecutionRepository(this.store.database, this.store.clock);
-    const environments = new EnvironmentRepository(this.store.database, this.store.clock);
-    const results = new ResultRepository(this.store.database, this.store.clock);
-    const operations = new OperationRepository(this.store.database, this.store.clock);
-    const observation = new ObservationRepository(this.store.database, this.store.clock);
-    const state = new StateRepository(this.store.database, this.store.clock);
-    const query = new QueryRepository(this.store.database);
-    const attempts = new AttemptFactory(this.store.database, this.store.clock, execution);
-    const useSimulator = options.mode !== "external";
-    this.simulators = useSimulator
-      ? createSimulators(path, options.runtimeProfile === undefined ? {} : { runtimeProfile: options.runtimeProfile })
-      : undefined;
-    const connectors = new ConnectorRegistry(this.connectorSet(options, this.simulators));
-    this.administration = new Administration(this.store, { runtimeSupports: (id, names) => connectors.runtimeSupports(id, names), connectorAvailable: (kind, id) => connectors.available(kind, id) });
-    const workHandler = new WorkHandler(work, execution, results, state);
-    const interactionHandler = new InteractionHandler(interactions, operations, () => this.store.clock.now());
-    const executionHandler = new ExecutionHandler({
-      work, execution, attempts, environments, interactions, operations, state,
-      installationUsable: (workspaceId, kind, id) => {
-        if (!connectors.available(kind, id)) throw unsupported('connector_unavailable', `Connector installation ${id} is not configured or compatible.`);
-        return this.administration.installations.list({
-        id: "system", workspaceId, role: "administrator",
-        projectIds: [], profileIds: [], bindingIds: [],
-      }).some((installation) => installation.kind === kind && installation.id === id &&
-        installation.available && installation.enabled);
-      },
-      runtimeSupports: (id, names) => connectors.runtimeSupports(id, names),
-    });
-    const continuationHandler = new ContinuationHandler({
-      work,
-      execution,
-      attempts,
-      operations,
-      environments,
-      observation,
-      results,
-      state,
-      installationUsable: (workspaceId, kind, id) => {
-        if (!connectors.available(kind, id)) return false;
-        return this.administration.installations.list({
-        id: "system", workspaceId, role: "administrator",
-        projectIds: [], profileIds: [], bindingIds: [],
-      }).some((installation) => installation.kind === kind &&
-        installation.id === id && installation.available && installation.enabled);
-      },
-      runtimeSupports: (id, names) => connectors.runtimeSupports(id, names),
-      now: () => this.store.clock.now(),
-    });
-    this.commands = new CommandService({
-      store: this.store, operations, work: workHandler, interactions: interactionHandler,
-      execution: executionHandler, continuations: continuationHandler,
-      administration: this.administration,
-    });
-    this.queries = new QueryService({
-      work, interactions, execution, environments, results, operations, query,
-    });
-    const delegationWorker = new DelegationWorker({
-      connectors, operations, environments, execution, state,
-    });
-    const runtimeWorker = new RuntimeWorker({
-      connectors, operations, state, execution, attempts, work, interactions,
-    });
-    const executionWorker = new ExecutionWorker({ connectors, operations, environments });
-    const reconcileWorker = new ReconcileWorker({
-      connectors, state, observation, execution, interactions, results,
-    });
-    this.worker = new OrchestrationWorker({
-      connectors, operations, delegation: delegationWorker, runtime: runtimeWorker,
-      execution: executionWorker, reconciliation: reconcileWorker,
-      terminalFailure: (item, receipt) => {
-        switch (item.operationKind) {
-          case "delegation.advance":
-          case "execution.attachForDelegation":
-          case "session.attachEnvironment":
-          case "runtime.openForDelegation":
-            delegationWorker.applyFailure(item);
-            return;
-          case "runtime.startAttempt":
-          case "runtime.sendInstruction":
-          case "runtime.deliverResponse":
-          case "runtime.requestStop":
-          case "session.attachExisting":
-          case "runtime.requestControl":
-          case "runtime.detachSession":
-            runtimeWorker.applyFailure(item, receipt);
-            return;
-          case "execution.detachAttachment":
-          case "execution.releaseAllocation":
-          case "execution.cancelOperation":
-          case "execution.releaseCanceledAllocation":
-          case "execution.detachCanceledAttachment":
-            executionWorker.applyFailure(item);
-            return;
-          default:
-            throw new TypeError(`No terminal failure reducer for ${item.operationKind}.`);
-        }
-      },
-    });
-    this.bridge = new BridgeQueries(this.store.database, interactions);
-    this.readiness = {
-      coreReady: false,
-      liveIntegrationReady: false,
-      simulated: useSimulator,
-    };
-    if (this.simulators !== undefined) {
-      this.simulator = { controls: this.simulators.controls, calls: this.simulators.calls };
-    } else {
-      this.simulator = undefined;
-    }
+    const runtime = createHubRuntime(path, this.store, options);
+    this.administration = runtime.administration; this.commands = runtime.commands;
+    this.queries = runtime.queries; this.worker = runtime.worker; this.bridge = runtime.bridge;
+    this.simulators = runtime.simulators; this.handoffService = runtime.handoffService;
+    this.readiness = { coreReady: false, liveIntegrationReady: false, simulated: runtime.useSimulator };
+    this.simulator = runtime.simulators === undefined ? undefined
+      : { controls: runtime.simulators.controls, calls: runtime.simulators.calls };
   }
 
   async execute(actor: Actor, input: unknown): Promise<HubCommandReceipt> {
@@ -218,6 +87,25 @@ export class Hub {
   }
   getEnvironmentBinding(actor: Actor, id: string) { return this.queries.getEnvironmentBinding(actor, id); }
   getCommandReceipt(actor: Actor, id: string) { return this.queries.getCommandReceipt(actor, id); }
+  registerProjectRepository(actor: Actor, input: RegisterRepositoryRequest) { return this.handoffService.registerRepository(actor, input); }
+  listProjectRepositories(actor: Actor, projectId: string) { return this.handoffService.listRepositories(actor, projectId); }
+  previewHandoff(actor: Actor, input: HandoffPreviewRequest) { return this.handoffService.preview(actor, input); }
+  getHandoff(actor: Actor, attemptId: string) {
+    const handoff = this.handoffService.get(actor, attemptId);
+    return { ...handoff,
+      results: this.snapshot(actor).results.filter((result) => result.attemptId === attemptId) };
+  }
+  listHandoffs(actor: Actor, taskId: string) {
+    return this.handoffService.list(actor, taskId).map((handoff) => ({ ...handoff,
+      results: this.snapshot(actor).results.filter((result) => result.attemptId === handoff.attempt.id) }));
+  }
+  recipientAssignment(input: RecipientAssignmentRequest) { return this.handoffService.assignment(input); }
+  acknowledgeAttemptDelivery(actor: Actor, input: {
+    readonly attemptId: string;
+    readonly deliveryDigest: string;
+  }): void {
+    this.handoffService.acknowledge(actor, input);
+  }
   getDashboard(actor: Actor) { return this.queries.dashboard(actor); }
   contextSnapshot(actor: Actor, input: ContextQuery) { return this.queries.context(actor, input); }
   events(actor: Actor, input: { readonly after: number; readonly limit?: number }) {
@@ -228,7 +116,10 @@ export class Hub {
   snapshot(actor: Actor): HubSnapshot { return this.queries.snapshot(actor); }
 
   agentRequests(actor: Actor) { return this.bridge.requests(actor); }
-  assertBridgeScope(scope: RuntimeScope): void { this.bridge.assertScope(scope); }
+  assertBridgeScope(scope: RuntimeScope): void {
+    this.bridge.assertScope(scope);
+    this.handoffService.assertScope(scope);
+  }
   bridgeResponses(actor: Actor, input: { readonly after?: string } = {}) { return this.bridge.responses(actor, input); }
 
   drain(input: { readonly limit?: number } = {}): Promise<number> { return this.worker.drain(input); }
@@ -242,17 +133,6 @@ export class Hub {
   close(): void {
     this.simulators?.close();
     this.store.close();
-  }
-
-  private connectorSet(options: HubOptions, simulators: Simulators | undefined): ConnectorSet {
-    const execution = { ...(options.connectors?.execution ?? {}) };
-    const runtime = { ...(options.connectors?.runtime ?? {}) };
-    if (simulators !== undefined) {
-      execution["execution-sim"] = simulators.execution;
-      runtime["runtime-sim-structured"] = simulators.runtimeFor('structured');
-      runtime["runtime-sim-limited"] = simulators.runtimeFor('limited_bridge');
-    }
-    return { execution, runtime };
   }
 
   private tryAdminCommand(input: unknown) {
