@@ -12,6 +12,8 @@ import type { StateRepository } from "../persistence/state-repository.ts";
 import type { WorkRepository } from "../persistence/work-repository.ts";
 import type { HandoffRepository } from "../persistence/handoff-repository.ts";
 import type { AttachedHandoffFactory } from "../persistence/attached-handoff.ts";
+import type { LifecycleRepository } from "../persistence/lifecycle-repository.ts";
+import { PromptEnvelopeSchema, renderPrompt } from "../prompts/index.ts";
 import { authorizeTask, requireRevision } from "./guards.ts";
 import type { CommandOf, CommandResult } from "./types.ts";
 import { existingReservationKeys, requireExistingSelection } from "./execution-selection.ts";
@@ -30,6 +32,7 @@ export class ExecutionHandler {
   readonly operations: OperationRepository;
   readonly state: StateRepository;
   private readonly handoffDelegation: HandoffDelegationHandler;
+  private readonly lifecycle: LifecycleRepository;
   readonly installationUsable: (
     workspaceId: string,
     kind: "execution" | "agent_runtime",
@@ -47,6 +50,7 @@ export class ExecutionHandler {
     readonly state: StateRepository;
     readonly handoffs: HandoffRepository;
     readonly attachedHandoffs: AttachedHandoffFactory;
+    readonly lifecycle: LifecycleRepository;
     readonly installationUsable: (
       workspaceId: string,
       kind: "execution" | "agent_runtime",
@@ -60,6 +64,7 @@ export class ExecutionHandler {
     this.interactions = input.interactions;
     this.operations = input.operations;
     this.state = input.state;
+    this.lifecycle = input.lifecycle;
     this.handoffDelegation = new HandoffDelegationHandler({ execution: input.execution,
       handoffs: input.handoffs, attached: input.attachedHandoffs, operations: input.operations });
     this.installationUsable = input.installationUsable;
@@ -134,11 +139,24 @@ export class ExecutionHandler {
         preview, authorizedEffectKinds: plan.requiredEffectKinds });
       if (attached !== undefined) return attached;
     }
+    const handoffEnvelope = preview === undefined ? undefined : PromptEnvelopeSchema.parse(JSON.parse(preview.prompt));
     const created = this.execution.createDelegation({
       task, profile, instruction,
       selectedReferenceIds: command.payload.selectedReferenceIds,
       selectedResponseIds: command.payload.selectedResponseIds,
       authorizedEffectKinds: plan.requiredEffectKinds,
+      ...(preview === undefined ? { renderInstruction: ({ attemptId, contextItems }) => renderPrompt("task_brief", {
+        task: { id: task.id, revision: task.revision, scopeRevision: task.scopeRevision,
+          title: task.title, description: task.description,
+          ...(task.expectedOutcome === undefined ? {} : { expectedOutcome: task.expectedOutcome }) },
+        attemptId, instruction, execution: { profileId: profile.id, profileRevision: profile.revision,
+          runtimeInstallationId: profile.runtimeInstallationId, environment: command.payload.environment },
+        amendments: this.lifecycle.view(actor.workspaceId, task.id).amendments,
+        criteria: this.lifecycle.currentCriteria(actor.workspaceId, task.id),
+        context: contextItems.map((item) => ({ id: item.sourceId,
+          text: item.includedText ?? item.omissionReason ?? "Context unavailable." })),
+      }) } : { promptDigest: preview.promptDigest, promptTemplate: { id: "verifier_handoff", version: 1,
+        inputDigest: digest(handoffEnvelope?.input ?? {}) } }),
     });
     if (preview !== undefined) this.handoffDelegation.bindNew(actor.workspaceId, preview, created.attempt);
     const environment = command.payload.environment;

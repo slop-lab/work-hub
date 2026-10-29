@@ -9,6 +9,7 @@ import type {
   TaskView,
 } from "../domain/model.ts";
 import { assembleContext } from "../artifacts/snapshot-context.ts";
+import type { RenderedPrompt } from "../prompts/index.ts";
 import type { Clock } from "./codec.ts";
 import { digest, newId, parseJson } from "./codec.ts";
 
@@ -40,6 +41,11 @@ const attemptRowSchema = z.strictObject({
   ]),
   inputSnapshotJson: z.string(), predecessorId: z.string().nullable(),
   unresolved: z.number(), stopRequestedAt: z.string().nullable(), observationEndedAt: z.string().nullable(),
+  interruption: z.enum([
+    "paused", "awaiting_input", "provider_stop", "operator_stop", "retryable_failure", "crash", "unknown",
+  ]).nullable(),
+  recovery: z.enum(["none", "observe", "reconcile", "resume", "retry", "escalated"]),
+  retryOrdinal: z.number(), retryLimit: z.number(), retryReason: z.string().nullable(),
   createdAt: z.string(), updatedAt: z.string(),
 });
 const profileRowSchema = z.strictObject({
@@ -78,6 +84,11 @@ function toAttempt(row: unknown): AttemptView {
     inputSnapshot: objectSchema.parse(parseJson(value.inputSnapshotJson)),
     ...(value.predecessorId === null ? {} : { predecessorId: value.predecessorId }),
     unresolved: value.unresolved === 1,
+    ...(value.interruption === null ? {} : { interruption: value.interruption }),
+    recovery: value.recovery,
+    retryOrdinal: value.retryOrdinal,
+    retryLimit: value.retryLimit,
+    ...(value.retryReason === null ? {} : { retryReason: value.retryReason }),
     ...(value.stopRequestedAt === null ? {} : { stopRequestedAt: value.stopRequestedAt }),
     ...(value.observationEndedAt === null ? {} : { observationEndedAt: value.observationEndedAt }),
     createdAt: value.createdAt, updatedAt: value.updatedAt,
@@ -95,6 +106,8 @@ const attemptSelect = `SELECT id, workspace_id AS workspaceId, task_id AS taskId
   role, origin, phase, outcome, observation, input_snapshot_json AS inputSnapshotJson,
   predecessor_id AS predecessorId,
   unresolved, stop_requested_at AS stopRequestedAt, observation_ended_at AS observationEndedAt,
+  interruption_kind AS interruption, recovery_kind AS recovery,
+  retry_ordinal AS retryOrdinal, retry_limit AS retryLimit, retry_reason AS retryReason,
   created_at AS createdAt,
   updated_at AS updatedAt FROM attempts`;
 
@@ -148,6 +161,10 @@ export class ExecutionRepository {
     readonly task: TaskView; readonly profile: ExecutionProfileView;
     readonly instruction: string; readonly selectedReferenceIds: readonly string[];
     readonly selectedResponseIds: readonly string[]; readonly authorizedEffectKinds: readonly string[];
+    readonly renderInstruction?: (input: { readonly attemptId: string;
+      readonly contextItems: ReturnType<typeof assembleContext> }) => RenderedPrompt<"task_brief">;
+    readonly promptTemplate?: { readonly id: "verifier_handoff"; readonly version: 1; readonly inputDigest: string };
+    readonly promptDigest?: string;
   }): { readonly session: SessionView; readonly attempt: AttemptView } {
     const sessionId = newId("session");
     const attemptId = newId("attempt");
@@ -158,13 +175,20 @@ export class ExecutionRepository {
       selectedReferenceIds: input.selectedReferenceIds,
       selectedResponseIds: input.selectedResponseIds,
     });
+    const rendered = input.renderInstruction?.({ attemptId, contextItems });
     const snapshot = {
       id: newId("snapshot"), taskId: input.task.id, taskRevision: input.task.revision,
+      scopeRevision: input.task.scopeRevision,
       profileId: input.profile.id, profileRevision: input.profile.revision,
-      instruction: input.instruction, selectedReferenceIds: input.selectedReferenceIds,
+      instruction: rendered?.text ?? input.instruction, selectedReferenceIds: input.selectedReferenceIds,
       selectedResponseIds: input.selectedResponseIds, authorizedEffectKinds: input.authorizedEffectKinds,
       contextItems,
       assembledAt: now,
+      ...(rendered === undefined && input.promptDigest === undefined ? {} : {
+        promptDigest: rendered?.digest ?? input.promptDigest }),
+      ...(rendered === undefined && input.promptTemplate === undefined ? {} : {
+        promptTemplate: rendered === undefined ? input.promptTemplate : {
+          id: rendered.templateId, version: rendered.version, inputDigest: rendered.inputDigest } }),
     };
     const completeSnapshot = { ...snapshot, digest: digest(snapshot) };
     const predecessor = input.task.primaryAttemptId ? z.object({ sessionId: z.string() }).optional().parse(this.database.prepare('SELECT session_id AS sessionId FROM attempts WHERE workspace_id=? AND id=?').get(input.task.workspaceId, input.task.primaryAttemptId)) : undefined;
