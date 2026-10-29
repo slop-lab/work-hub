@@ -91,7 +91,7 @@ export function createHubRuntime(path: string, store: Store, options: HubRuntime
   const commands = new CommandService({ store, operations,
     work: new WorkHandler({ work, execution, results, state, lifecycle }),
     interactions: new InteractionHandler(interactions, operations, () => store.clock.now()),
-    lifecycle: new LifecycleHandler({ lifecycle, work, execution, results }),
+    lifecycle: new LifecycleHandler({ lifecycle, work, execution, results, state }),
     execution: executionHandler,
     continuations: new ContinuationHandler({ work, execution, attempts, operations, environments,
       observation, results, state, handoffs, lifecycle, installationUsable,

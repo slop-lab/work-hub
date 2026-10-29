@@ -19,6 +19,7 @@ export const lifecycleCommandSchemas = [
     resultId: idSchema,
     decision: z.enum(["accepted", "incomplete", "rejected"]),
     missingCriteria: z.array(idSchema).max(100).default([]),
+    activeExecutionDecision: z.enum(["request_stop", "allow_to_continue"]).optional(),
     note: textSchema.optional(),
   })),
   envelope("blocker.open", z.strictObject({

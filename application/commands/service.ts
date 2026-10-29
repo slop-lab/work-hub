@@ -123,7 +123,7 @@ export class CommandService {
       case "blocker.resolve": return this.lifecycle.resolveBlocker(actor, command);
       case "blocker.recheck": return this.lifecycle.recheckBlocker(actor, command);
       case "attempt.reconcile": return this.lifecycle.reconcileAttempt(actor, command);
-      case "attempt.controlledResume": return this.lifecycle.controlledResume(actor, command);
+      case "attempt.controlledResume": return this.controlledRecovery(actor, command);
       case 'attempt.report': return this.work.reportActivity(actor, command);
       case "request.create": return this.interactions.create(actor, command);
       case "request.respond": return this.interactions.respond(actor, command);
@@ -193,6 +193,29 @@ export class CommandService {
       objectRefs: [{ kind: "task_entry", id: dispatch.entryId }, ...result.objectRefs],
       operationIds: result.operationIds,
     };
+  }
+
+  private controlledRecovery(
+    actor: Actor,
+    command: Extract<HubCommand, { readonly type: "attempt.controlledResume" }>,
+  ): CommandResult {
+    const dispatch = this.lifecycle.controlledResume(actor, command);
+    switch (dispatch.kind) {
+      case "resume": {
+        const result = this.continuations.continue(actor, dispatch.command);
+        const attemptId = result.objectRefs.find((reference) => reference.kind === "attempt")?.id;
+        if (attemptId === undefined) throw new TypeError("Continuation did not return its attempt identity.");
+        this.lifecycle.recordResume({ workspaceId: actor.workspaceId, attemptId,
+          reason: dispatch.reason, retryOrdinal: dispatch.retryOrdinal, retryLimit: dispatch.retryLimit });
+        return result;
+      }
+      case "retry":
+        return this.continuations.retry(actor, dispatch.command);
+      case "escalated":
+        return dispatch.result;
+      default:
+        return assertNever(dispatch);
+    }
   }
 
   private receipt(actor: Actor, commandId: string, result: CommandResult): HubCommandReceipt {
