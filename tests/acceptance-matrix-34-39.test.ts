@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { test } from "node:test";
+import { z } from "zod";
 
 import { Hub } from "../application/orchestration/hub.ts";
+import { PromptEnvelopeSchema } from "../application/prompts/index.ts";
 import {
   admin, createTask, delegateNone, drainIdle, finishAttempt, fixture, member,
   operationKinds,
@@ -95,7 +97,11 @@ test("AT-36 current-task retry assembles edited task context instead of copying 
     const receipt = await context.hub.execute(member, { commandId: "handoff-36-current", type: "attempt.retry", target: { kind: "attempt", id: first.id }, expected: { task: task.revision, profile: 1 }, payload: { predecessorId: first.id, input: "current_task", sameSession: false } });
     assert.equal(receipt.status, "accepted");
     const next = context.hub.snapshot(member).attempts.find((item) => item.id === receipt.objectRefs[0]?.id); assert.ok(next);
-    assert.equal(next.inputSnapshot["instruction"], "Edited current retry title\n\nEdited current retry description");
+    const envelope = PromptEnvelopeSchema.parse(JSON.parse(z.string().parse(next.inputSnapshot["instruction"])));
+    const promptInput = z.object({ attemptId: z.string(), instruction: z.string() }).parse(envelope.input);
+    assert.deepEqual(envelope.template, { id: "task_brief", version: 1 });
+    assert.equal(promptInput.attemptId, next.id);
+    assert.equal(promptInput.instruction, "Edited current retry title\n\nEdited current retry description");
     assert.deepEqual(next.inputSnapshot["selectedReferenceIds"], []);
     assert.deepEqual(next.inputSnapshot["selectedResponseIds"], []);
     assert.equal(next.inputSnapshot["taskRevision"], task.revision);

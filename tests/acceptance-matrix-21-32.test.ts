@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { z } from "zod";
 import { digest } from '../application/persistence/codec.ts';
+import { PromptEnvelopeSchema } from "../application/prompts/index.ts";
 
 import {
   admin, createTask, delegateNone, drainIdle, finishAttempt, fixture, member,
@@ -125,7 +127,11 @@ test("AT-29 continuation after termination creates a distinct attempt and immuta
     assert.ok(next);
     assert.notEqual(next.id, first.id);
     assert.equal(next.sessionId, first.sessionId);
-    assert.equal(next.inputSnapshot["instruction"], "Continue with the review fixes");
+    const envelope = PromptEnvelopeSchema.parse(JSON.parse(z.string().parse(next.inputSnapshot["instruction"])));
+    const promptInput = z.object({ attemptId: z.string(), instruction: z.string() }).parse(envelope.input);
+    assert.deepEqual(envelope.template, { id: "task_brief", version: 1 });
+    assert.equal(promptInput.attemptId, next.id);
+    assert.equal(promptInput.instruction, "Continue with the review fixes");
   } finally { context.close(); }
 });
 
