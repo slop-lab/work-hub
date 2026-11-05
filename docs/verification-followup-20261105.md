@@ -43,6 +43,20 @@ before the fix and passed afterward. Post-fix full checks passed 394 tests with
 one live opt-in skip; browser coverage again passed 39 with one opt-in skip.
 Existing QG file/directory size warnings remain advisory, with no policy changes.
 
+An additional exact-commit full run enabled the live browser journey on the same
+public free model. It found two failures, retained in private
+`browser-9ae531c.log`: a linked-request screenshot detached during background
+refresh, and the model printed the requested question instead of calling a tool.
+Native database inspection confirmed zero tool calls, not a dropped question.
+The screenshot now uses the existing bounded detached-element capture helper.
+The live test explicitly names the `question` tool and forbids a text-only
+substitute; it still requires the actual native question, answer, reconnect,
+continuation and human completion. No assertion was removed or model changed.
+The targeted live plus lifecycle rerun passed all four tests. The final private
+ledger records the subsequent full live-enabled suite result against the final
+commit, including any remaining failure rather than treating these targeted
+results as full-suite evidence.
+
 ## Actual OpenCode and DIM coverage
 
 - **PASS, native service:** OpenCode 1.18.31 was launched with isolated XDG state,
