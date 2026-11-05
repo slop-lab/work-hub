@@ -244,7 +244,7 @@ test("Given linked blocking and nonblocking questions, when task and session pag
 		for (const width of [375, 768, 1280] as const) {
 			await page.setViewportSize({ width, height: 900 });
 			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
-			await page.locator('[data-lifecycle-section="linked-requests"]').screenshot({ path: `.omo/evidence/lifecycle/session-questions-${width}.png` });
+			await capture(page.locator('[data-lifecycle-section="linked-requests"]'), `.omo/evidence/lifecycle/session-questions-${width}.png`);
 		}
 	} finally {
 		await app.close();
