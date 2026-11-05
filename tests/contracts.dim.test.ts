@@ -4,18 +4,19 @@ import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { ConnectorLedger } from '../application/connectors/ledger.ts';
-import { DimExecutionConnector } from '../application/connectors/dim.ts';
+import { DimExecutionConnector, dimConnectionSchema } from '../application/connectors/dim.ts';
 import type { ExistingEnvironmentRegistration } from '../application/contracts/index.ts';
 import { digest } from '../application/persistence/codec.ts';
 import { executionBoundary } from '../application/orchestration/connector-boundary.ts';
 
-async function fixture() {
+async function fixture(prefix = '') {
   const calls: string[] = [];
   const server = createServer((req, res) => {
     calls.push(`${req.method} ${req.url}`);
     res.setHeader('content-type', 'application/json');
     if (req.headers.authorization !== 'Bearer scoped-fixture') { res.writeHead(401); res.end('{}'); return; }
-    res.end(JSON.stringify(req.url === '/v1/resources' ? { cpuCount: '8', memory: '32GiB', pidsLimit: '8192' } : {
+    if (!req.url?.startsWith(`${prefix}/v1/`)) { res.writeHead(404); res.end('{}'); return; }
+    res.end(JSON.stringify(req.url === `${prefix}/v1/resources` ? { cpuCount: '8', memory: '32GiB', pidsLimit: '8192' } : {
       plugins: [{ name: 'external-urls', state: 'ready' }],
     }));
   });
@@ -23,7 +24,7 @@ async function fixture() {
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const ledger = new ConnectorLedger(':memory:');
-  const connection = { installationId: 'dim-scoped', label: 'Scoped fixture', endpoint: `http://127.0.0.1:${address.port}`,
+  const connection = { installationId: 'dim-scoped', label: 'Scoped fixture', endpoint: `http://127.0.0.1:${address.port}${prefix}`,
     token: 'scoped-fixture', hostId: 'host-stable-id', workspaceId: randomUUID(), incarnation: 'incarnation-one',
     displayName: 'Friendly name is not identity', identityExpiresAt: new Date(Date.now() + 60_000).toISOString(),
     runtimeInstallationId: 'native', allowedProjectIds: ['project'], workAreas: [{ key: 'repo-main', path: '/fixture',
@@ -58,6 +59,29 @@ test('DIM attachment verifies exact scoped identity and never gains lifecycle au
       attachmentRef: attached.result.attachmentRef, expectedIdentity: attached.result.identity });
     assert.equal(detached.status, 'confirmed');
     assert.equal(f.calls.every((call) => call === 'GET /v1/resources' || call === 'GET /v1/plugins'), true);
+  } finally { await f.close(); }
+});
+
+test('DIM discovery preserves the scoped workspace gateway prefix', async () => {
+  const f = await fixture('/services/workspace');
+  try {
+    const discovery = await f.connector.probeExisting(f.ctx, f.registration);
+    assert.equal(discovery.value.observedState, 'running');
+    assert.deepEqual([...f.calls].sort(), [
+      'GET /services/workspace/v1/plugins', 'GET /services/workspace/v1/resources',
+    ]);
+  } finally { await f.close(); }
+});
+
+test('DIM connection allows only the advertised local workspace service prefix', async () => {
+  const f = await fixture();
+  try {
+    assert.equal(dimConnectionSchema.safeParse({ ...f.connection,
+      endpoint: 'http://127.0.0.1:19420/services/workspace' }).success, true);
+    for (const endpoint of ['http://127.0.0.1:19420/services/native-git',
+      'https://example.invalid/services/workspace', 'http://127.0.0.1:19420/services/workspace?token=x']) {
+      assert.equal(dimConnectionSchema.safeParse({ ...f.connection, endpoint }).success, false);
+    }
   } finally { await f.close(); }
 });
 

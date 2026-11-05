@@ -11,8 +11,9 @@ export const dimConnectionSchema = z.strictObject({
   installationId: z.string().min(1), label: z.string().min(1),
   endpoint: z.url().refine((value) => { const url = new URL(value);
     const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+    const scopedGateway = url.origin === 'http://127.0.0.1:19420' && url.pathname === '/services/workspace';
     return (url.protocol === 'https:' || url.protocol === 'http:' && loopback) &&
-      !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash; }),
+      !url.username && !url.password && (url.pathname === '/' || scopedGateway) && !url.search && !url.hash; }),
   token: z.string().min(1), hostId: z.string().min(1), workspaceId: z.uuid(),
   incarnation: z.string().min(1), displayName: z.string().min(1),
   identityExpiresAt: z.iso.datetime(), runtimeInstallationId: z.string(),
@@ -52,7 +53,7 @@ export class DimExecutionConnector implements ExecutionConnector {
     this.check(ctx);
     const read = async (path: string): Promise<unknown> => {
       try {
-        return await ky.get(new URL(path, this.connection.endpoint), { headers: { authorization: `Bearer ${this.connection.token}` },
+        return await ky.get(new URL(path, `${this.connection.endpoint.replace(/\/$/, '')}/`), { headers: { authorization: `Bearer ${this.connection.token}` },
           timeout: 5000, retry: 0, redirect: 'error', ...(ctx.signal === undefined ? {} : { signal: ctx.signal }) }).json<unknown>();
       } catch (error) {
         if (!(error instanceof Error)) throw error;
@@ -60,7 +61,7 @@ export class DimExecutionConnector implements ExecutionConnector {
           message: 'DIM scoped discovery failed. Check the selected workspace connection with its operator; no lifecycle action was attempted.', retry: 'read_only_retry' });
       }
     };
-    const [resources, plugins, directory] = await Promise.all([read('/v1/resources'), read('/v1/plugins'), this.verifyDirectory(ctx)]);
+    const [resources, plugins, directory] = await Promise.all([read('v1/resources'), read('v1/plugins'), this.verifyDirectory(ctx)]);
     const safeResources = z.object({ cpuCount: z.string(), memory: z.string(), pidsLimit: z.string() }).parse(resources);
     const safePlugins = z.object({ plugins: z.array(z.object({ name: z.string(), state: z.string() })) }).parse(plugins);
     if (!this.connection.workAreas.every((area) => area.path === directory)) throw new HubError({
