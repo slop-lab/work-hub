@@ -27,7 +27,9 @@ test('browser delegates to actual OpenCode, answers, reconnects and explicitly c
     await page.getByLabel('New task title').fill('Disposable native browser acceptance');
     await page.getByRole('button', { name: 'Add task', exact: true }).click();
     await page.getByRole('button', { name: 'Open Disposable native browser acceptance' }).click();
-    await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Disposable connector acceptance only. Your first action MUST invoke the available tool named question. Ask exactly one free-text question with header Browser marker and question Which browser marker? Do not print that question as an assistant text reply: a text reply is not a native question. Wait for the tool answer, then return a short receipt. Do not delegate, run shell commands, use other tools or change files.');
+    await page.getByRole('textbox', { name: 'Description', exact: true }).fill(
+      'Disposable connector acceptance only. Your first action MUST invoke the available tool named question. Ask exactly one free-text question with header Browser marker and question Which browser marker? Do not print that question as an assistant text reply: a text reply is not a native question. Wait for the tool answer, then return a short receipt. Do not delegate, run shell commands, use other tools or change files.',
+    );
     await page.getByRole('button', { name: 'Save task', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('Task updated.');
     await page.getByRole('button', { name: 'Delegate', exact: true }).click();
