@@ -7,6 +7,10 @@ repositories:
     branches:
       main: {review: true}
       development: {review: false}
+    upstream:
+      url: https://github.com/slop-lab/work-hub.git
+      branch: main
+    publish: {main: main}
 policy:
   code-review:
     requiredReviewerIds: [mjy]
