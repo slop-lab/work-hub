@@ -32,6 +32,7 @@ test("Given loaded transcript pages, when background context refreshes, then vie
 		await page.getByLabel("Environment choice").selectOption("none");
 		await page.getByRole("button", { name: "Confirm delegation" }).click();
 		await page.locator("#main-content").getByRole("link", { name: "Session", exact: true }).click();
+		await expect(page.getByText("running", { exact: true })).toBeVisible();
 		const sessionId = page.url().split("/").at(-1);
 		if (sessionId === undefined) throw new TypeError("Session route missing its ID");
 		for (let index = 1; index <= 55; index += 1) {
@@ -41,7 +42,7 @@ test("Given loaded transcript pages, when background context refreshes, then vie
 		await page.getByRole("button", { name: "Refresh" }).click();
 		await page.getByRole("button", { name: "Load more history" }).click();
 		await expect(page.getByText("Persistent output 55")).toBeVisible();
-		await page.waitForTimeout(1_700);
+		await page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
 		await expect(page.getByText("Persistent output 55")).toBeVisible();
 		await expect(page.getByText(/55 retained entries/)).toBeVisible();
 	} finally { await app.close(); }
