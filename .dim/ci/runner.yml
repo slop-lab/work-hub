@@ -1,3 +1,5 @@
 jobs:
   source:
     script: scripts/ci/source.bash
+  browser:
+    script: scripts/ci/browser.bash
