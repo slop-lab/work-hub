@@ -50,6 +50,10 @@ and application service do not require a browser installation.
 
 ## Try the end-to-end simulator flow
 
+For a separately owned, preseeded manual instance of this same UI/API, see
+[isolated UI preview](docs/ui-preview.md). It includes the reachable workspace
+preview URL, private token-file path, scenario click paths and safe lifecycle commands.
+
 1. Capture a title in **Backlog**, add context or a formal question, and answer it
    from **Today**. No environment or runtime starts from capture or a question.
 2. Select **Delegate**. The project's default profile is selected, but nothing runs
