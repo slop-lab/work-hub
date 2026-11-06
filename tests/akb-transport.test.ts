@@ -18,7 +18,7 @@ async function requestBody(request: IncomingMessage): Promise<string> {
 function connection(origin: string) {
   return akbConnectionSchema.parse({ installationId: 'source', label: 'AKB', origin,
     authorization: 'Bearer synthetic-private-value', workspaceId: 'source-workspace',
-    allowedPageIds: ['page'], workHubWorkspaceId: 'workspace-default',
+    allowedPageIds: ['page'], allowedKnowledgeIds: ['knowledge-4'], workHubWorkspaceId: 'workspace-default',
     allowedProjectIds: ['project-default'] });
 }
 
@@ -61,7 +61,7 @@ test('AKB context transport posts the exact selection and reports one generic un
   const address = server.address();
   if (address === null || typeof address === 'string') throw new TypeError('Fixture did not listen');
   const client = new AkbClient(connection(`http://127.0.0.1:${address.port}/`));
-  const selection = { selectionPage: { id: 'selection-page', revision: 4 }, maxBytes: 65_536 } as const;
+  const selection = { references: [{ kind: 'page' as const, id: 'page', revision: 4 }], maxBytes: 65_536 };
   try {
     // When / Then
     await assert.rejects(client.readContext(selection), (error: unknown) => error instanceof HubError &&
@@ -74,7 +74,7 @@ test('AKB context transport posts the exact selection and reports one generic un
   }
 });
 
-test('AKB document discovery uses the owned endpoint and fails closed without the exact response DTO', async () => {
+test('AKB document discovery uses the owned endpoint and fails closed on incompatible response DTOs', async () => {
   // Given
   let observedUrl = '';
   const server = createServer((request, response) => {
@@ -90,7 +90,7 @@ test('AKB document discovery uses the owned endpoint and fails closed without th
     // When / Then
     await assert.rejects(client.findDocuments({ kind: 'knowledge', query: 'decision', limit: 10,
       afterId: 'knowledge-4' }), (error: unknown) => error instanceof HubError &&
-        error.data.code === 'akb_document_contract_unavailable');
+         error.data.code === 'akb_incompatible_response');
     assert.equal(observedUrl,
       '/api/content/v1/workspaces/source-workspace/documents?kind=knowledge&query=decision&limit=10&afterId=knowledge-4');
   } finally {
@@ -98,7 +98,7 @@ test('AKB document discovery uses the owned endpoint and fails closed without th
   }
 });
 
-test('AKB context transport distinguishes invalid requests and unavailable success contracts', async () => {
+test('AKB context transport distinguishes invalid requests and malformed success responses', async () => {
   // Given
   let status = 422;
   const server = createServer((_request, response) => {
@@ -110,7 +110,7 @@ test('AKB context transport distinguishes invalid requests and unavailable succe
   const address = server.address();
   if (address === null || typeof address === 'string') throw new TypeError('Fixture did not listen');
   const client = new AkbClient(connection(`http://127.0.0.1:${address.port}/`));
-  const selection = { references: [{ kind: 'page' as const, id: 'page-one', revision: 7 }],
+  const selection = { references: [{ kind: 'page' as const, id: 'page', revision: 7 }],
     maxBytes: 65_536 };
   try {
     // When / Then
@@ -118,7 +118,7 @@ test('AKB context transport distinguishes invalid requests and unavailable succe
       error.data.code === 'akb_context_invalid');
     status = 200;
     await assert.rejects(client.readContext(selection), (error: unknown) => error instanceof HubError &&
-      error.data.code === 'akb_context_contract_unavailable');
+       error.data.code === 'akb_incompatible_response');
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
