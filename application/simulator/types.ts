@@ -64,6 +64,7 @@ export interface SimulatorControls {
   setEnvironment(registrationId: string, state: SimulatedEnvironment): void;
   setRuntimeProfile(profile: RuntimeProfile): void;
   setSessionMissing(hubSessionId: string): void;
+  setDeliveryLookupAvailable(hubSessionId: string, available: boolean): void;
   addHistoryGap(hubSessionId: string, reason: string): void;
   emitOutput(hubSessionId: string, text: string, hubAttemptId?: string): void;
   emitQuestion(input: SimulatedQuestion): void;

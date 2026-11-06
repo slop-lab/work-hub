@@ -33,6 +33,7 @@ export class PersistentSimulatorControls implements SimulatorControls {
   setEnvironment(registrationId: string, state: Parameters<SimulatorControls["setEnvironment"]>[1]): void { this.#store.setEnvironment(registrationId, state); }
   setRuntimeProfile(profile: Parameters<SimulatorControls["setRuntimeProfile"]>[0]): void { this.#store.setRuntimeProfile(profile); }
   setSessionMissing(hubSessionId: string): void { const session = this.#session(hubSessionId); this.#store.setState(`session:${hubSessionId}`, JSON.stringify({ ...session.state, missing: true })); }
+  setDeliveryLookupAvailable(hubSessionId: string, available: boolean): void { this.#store.setState(`response-lookup:${z.string().min(1).parse(hubSessionId)}`, available ? "available" : "held"); }
   addHistoryGap(hubSessionId: string, reason: string): void { this.#store.setState(`gap:${hubSessionId}`, reason); }
   emitOutput(hubSessionId: string, text: string, hubAttemptId?: string): void { const value = z.string().max(65_536).parse(text); this.#store.addOutput(hubSessionId, { kind: "message", role: "agent", text: value, observedAt: this.#store.now(), ...(hubAttemptId === undefined ? {} : { hubAttemptId }) }); }
   emitQuestion(input: SimulatedQuestion): void {

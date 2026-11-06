@@ -43,8 +43,11 @@ export class SimulatorStore {
     this.#db.prepare("INSERT OR REPLACE INTO operations(operation_id,digest,receipt,visible_receipt) VALUES(?,?,?,?)").run(operationId, digest, JSON.stringify(receipt), visibleReceipt === undefined ? null : JSON.stringify(visibleReceipt));
   }
   lookup(operationId: string): OperationLookup {
+    const held = this.#db.prepare("SELECT 1 FROM calls JOIN state ON state.key = 'response-lookup:' || json_extract(calls.input, '$.target.hubSessionId') WHERE calls.operation_id = ? AND calls.operation_kind = 'runtime.deliverResponse' AND state.value = 'held' LIMIT 1").get(operationId);
     const found = this.getOperation(operationId);
-    return found === undefined ? { kind: "not_found", absence: "proven_not_executed" } : { kind: "found", receipt: typedReceipt(validateSerializedOperationReceipt(found.receipt), JsonValueSchema) };
+    if (found === undefined) return { kind: "not_found", absence: "proven_not_executed" };
+    const receipt = held === undefined ? found.receipt : found.visibleReceipt ?? found.receipt;
+    return { kind: "found", receipt: typedReceipt(validateSerializedOperationReceipt(receipt), JsonValueSchema) };
   }
   recordCall(connector: "execution" | "runtime", operationKind: string, input: JsonObject, operationId?: string, inputDigest?: string): void {
     this.#db.prepare("INSERT INTO calls(connector,operation_kind,operation_id,input_digest,input,recorded_at) VALUES(?,?,?,?,?,?)").run(connector, operationKind, operationId ?? null, inputDigest ?? null, JSON.stringify(input), this.now());
