@@ -116,4 +116,11 @@ async function main(): Promise<void> {
 }
 
 process.umask(0o077);
-await main();
+if (process.argv[2] === '--application') {
+  const { verifyAkbApplication } = await import('./verify-akb-application.ts');
+  await verifyAkbApplication().catch((error: unknown) => {
+    process.stderr.write(`${JSON.stringify({ stage: 'paired-application-failed',
+      errorKind: error instanceof Error ? error.name : 'unknown' })}\n`);
+    process.exitCode = 1;
+  });
+} else await main();
