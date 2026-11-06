@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { Server as HttpServer } from "node:http";
 import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +31,7 @@ export async function startBrowserHub(page: Page, options: { readonly mode?: "si
 	app.get("/app.css", serveStatic({ root: webRoot }));
 	app.get("/", serveStatic({ path: join(webRoot, "index.html") }));
 	const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port });
+	if (!(server instanceof HttpServer)) throw new TypeError("Browser fixtures require an owned HTTP/1 server.");
 	await new Promise<void>((resolve) => server.once("listening", resolve));
 	const timer = setInterval(() => {
 		void hub.reconcile().then(() => hub.drain());
@@ -43,7 +45,10 @@ export async function startBrowserHub(page: Page, options: { readonly mode?: "si
 		hub,
 		close: async () => {
 			clearInterval(timer);
-			await new Promise<void>((resolve) => server.close(() => resolve()));
+			await new Promise<void>((resolve) => {
+				server.close(() => resolve());
+				server.closeAllConnections();
+			});
 			hub.close();
 			auth.close();
 			rmSync(directory, { recursive: true, force: true });

@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { once } from "node:events";
+import { createConnection } from "node:net";
 import { hubStateSchema, outputPageSchema } from "../../web/state-schema.ts";
 import { admin, createTask, delegateNone } from "../acceptance-fixture.ts";
 import { startBrowserHub } from "../browser-fixture.ts";
@@ -41,4 +43,26 @@ test("Given external mode, when the new lookup control is requested, then curren
     const anonymous = await page.request.post(`${app.url}/api/v1/simulator/commands`, { headers: { Origin: app.url }, data });
     expect(anonymous.status()).toBe(401);
   } finally { await app.close(); }
+});
+
+test("Given an unfinished connection to the owned fixture, when it closes, then teardown finishes without waiting for framework-owned page cleanup", async ({ page }) => {
+  const app = await startBrowserHub(page);
+  const socket = createConnection({ host: "127.0.0.1", port: Number(new URL(app.url).port) });
+  await once(socket, "connect");
+  const accepted = new Promise<Buffer>((resolve, reject) => {
+    socket.once("data", resolve);
+    socket.once("error", reject);
+  });
+  socket.write(`POST /api/v1/login HTTP/1.1\r\nHost: fixture\r\nOrigin: ${app.url}\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n{`);
+  expect((await accepted).toString()).toContain("HTTP/1.1 100 Continue");
+  let stopped = false;
+  const closing = app.close().then(() => { stopped = true; });
+  try {
+    await expect.poll(() => stopped, { timeout: 2_000 }).toBe(true);
+    expect(page.isClosed()).toBe(false);
+  } finally {
+    socket.destroy();
+    await page.context().close();
+    await closing;
+  }
 });
