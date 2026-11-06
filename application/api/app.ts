@@ -48,6 +48,8 @@ export function createApplication(options: ApplicationOptions) {
   app.get('/api/v1/integrations', async (c) => c.json(options.connections === undefined ? { runtime: [], execution: [], knowledge: [] } : await options.connections.discover(actor(c))));
   if (options.connections !== undefined) app.route('/api/v1', externalContextRoutes({
     service: options.connections.contextService(hub), actor,
+    contextCapture: { preflight: (current, input) => hub.preflightExternalContext(current, input),
+      capture: (current, input) => hub.captureExternalContext(current, input) },
   }));
   app.get('/api/v1/sessions/:id/native-link', (c) => {
     const current = actor(c);
