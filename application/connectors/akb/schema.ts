@@ -15,14 +15,17 @@ export const akbConnectionSchema = z.strictObject({
   allowedProjectIds: z.array(z.string().min(1).max(200)).min(1).max(500),
   allowedSpaceIds: z.array(z.string().min(1).max(200)).max(500).default([]),
   allowedPageIds: z.array(z.string().min(1).max(200)).max(500).default([]),
-}).refine((value) => value.allowedSpaceIds.length > 0 || value.allowedPageIds.length > 0,
-  'AKB connection requires at least one allowed Space or Page.');
+  allowedKnowledgeIds: z.array(z.string().min(1).max(200)).max(500).default([]),
+  allowedUserIds: z.array(z.string().min(1).max(200)).min(1).max(500).optional(),
+  sourcePrincipalId: z.string().min(1).max(200).optional(),
+}).refine((value) => value.allowedSpaceIds.length > 0 || value.allowedPageIds.length > 0 || value.allowedKnowledgeIds.length > 0,
+  'AKB connection requires at least one allowed Space, Page or Knowledge object.');
 
 export type AkbConnection = z.infer<typeof akbConnectionSchema>;
 
 export const akbSourceReferenceSchema = z.strictObject({
   kind: z.enum(['page', 'knowledge']),
-  id: z.string().min(1).max(200),
+  id: z.string().min(1).max(200).regex(/^[^/\\]+$/),
   revision: z.number().int().positive(),
 });
 
@@ -45,9 +48,9 @@ export const akbContextRequestSchema = z.union([
 
 export const akbDocumentQuerySchema = z.strictObject({
   kind: z.enum(['page', 'knowledge']),
-  query: z.string().min(1).max(500),
-  limit: z.number().int().positive(),
-  afterId: z.string().min(1).max(200).optional(),
+  query: z.string().trim().max(500).default(''),
+  limit: z.number().int().min(1).max(100).default(20),
+  afterId: z.string().max(200).optional(),
 });
 
 export type AkbContextRequest = z.infer<typeof akbContextRequestSchema>;
@@ -80,7 +83,7 @@ export const akbBlockSchema: z.ZodType<AkbBlock> = z.lazy(() => z.strictObject({
 export const akbPageSchema = z.strictObject({
   id: z.string().min(1).max(200), workspaceId: z.string().min(1).max(200),
   spaceId: z.string().min(1).max(200).nullable(), parentPageId: z.string().min(1).max(200).nullable(),
-  title: z.string().min(1).max(10_000), revision: z.number().int().positive(),
+  title: z.string(), revision: z.number().int().positive(),
   lifecycle: z.enum(['active', 'archived']),
   document: z.strictObject({ version: z.literal(1), blocks: z.array(akbBlockSchema).max(10_000).readonly() }),
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),

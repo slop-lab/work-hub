@@ -10,3 +10,5 @@ export {
   akbSourceReferenceSchema,
 } from './schema.ts';
 export type { AkbConnection, AkbContextRequest, AkbDocumentQuery, AkbPage } from './schema.ts';
+export { akbContextResponseSchema, akbDocumentsResponseSchema } from './context-schema.ts';
+export type { AkbContextResponse, AkbDocumentsResponse } from './context-schema.ts';
