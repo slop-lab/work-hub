@@ -17,9 +17,9 @@ export type BrowserHub = {
 	readonly close: () => Promise<void>;
 };
 
-export async function startBrowserHub(page: Page): Promise<BrowserHub> {
+export async function startBrowserHub(page: Page, options: { readonly mode?: "simulator" | "external" } = {}): Promise<BrowserHub> {
 	const directory = mkdtempSync(join(tmpdir(), "work-hub-browser-"));
-	const hub = new Hub(join(directory, "hub.sqlite"));
+	const hub = new Hub(join(directory, "hub.sqlite"), options);
 	const auth = new AuthStore(join(directory, "auth.sqlite"));
 	const token = auth.bootstrap("user-admin");
 	const port = await reservePort();

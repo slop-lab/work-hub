@@ -8,7 +8,7 @@ export function simulatorPanel(ctx: UiContext, session: HubSession): HTMLElement
 	if (!ctx.state.simulator || ctx.state.me.role !== "admin") return null;
 	const supportsQuestions = session.capabilities.nativeQuestionSupport || session.capabilities.bridgeQuestionSupport;
 	const questionOption = el("option", { value: "question", disabled: !supportsQuestions }, "Question");
-	const type = el("select", { class: "select", name: "type" }, el("option", { value: "output" }, "Output"), questionOption, el("option", { value: "result" }, "Result"), el("option", { value: "termination" }, "Termination"), el("option", { value: "gap" }, "History gap"));
+	const type = el("select", { class: "select", name: "type" }, el("option", { value: "output" }, "Output"), questionOption, el("option", { value: "result" }, "Result"), el("option", { value: "termination" }, "Termination"), el("option", { value: "gap" }, "History gap"), el("option", { value: "delivery_lookup" }, "Restore delivery lookup"));
 	const text = el("textarea", { class: "textarea", name: "text", rows: "3", placeholder: "Artificial scenario content" });
 	const route = el("select", { class: "select", name: "route" });
 	if (session.capabilities.nativeQuestionSupport) route.append(el("option", { value: "native" }, "Native route"));
@@ -22,14 +22,16 @@ export function simulatorPanel(ctx: UiContext, session: HubSession): HTMLElement
 	const contentField = label("Scenario content", text);
 	const questionLimitation = el("p", { class: "limitation" }, "Questions are unavailable because this session supports neither native nor bridge question delivery.");
 	questionLimitation.hidden = supportsQuestions;
+	const deliveryLookupLimitation = el("p", { class: "limitation" }, "This releases an artificially held simulator receipt so normal reconciliation can observe it. It is not provider evidence.");
 	const syncFields = (): void => {
 		routeField.hidden = type.value !== "question";
 		blockingField.hidden = type.value !== "question";
 		outcomeField.hidden = type.value !== "termination";
-		contentField.hidden = type.value === "termination";
+		contentField.hidden = type.value === "termination" || type.value === "delivery_lookup";
+		deliveryLookupLimitation.hidden = type.value !== "delivery_lookup";
 	};
 	type.addEventListener("change", syncFields);
-	const form = el("form", { class: "stack" }, label("Simulated event", type), questionLimitation, contentField, routeField, blockingField, outcomeField, submitButton("Emit simulated event", "secondary"));
+	const form = el("form", { class: "stack" }, label("Simulated event", type), questionLimitation, deliveryLookupLimitation, contentField, routeField, blockingField, outcomeField, submitButton("Emit simulated event", "secondary"));
 	syncFields();
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
@@ -46,9 +48,11 @@ export function simulatorPanel(ctx: UiContext, session: HubSession): HTMLElement
 					? { type: kind, sessionId: session.id, summary: content }
 					: kind === "termination"
 						? { type: kind, sessionId: session.id, outcome: findFormValue(form, "outcome") }
-						: kind === "gap"
-							? { type: kind, sessionId: session.id, reason: content }
-							: { type: "output", sessionId: session.id, text: content };
+						: kind === "delivery_lookup"
+							? { type: kind, sessionId: session.id, available: true }
+							: kind === "gap"
+								? { type: kind, sessionId: session.id, reason: content }
+								: { type: "output", sessionId: session.id, text: content };
 		void sendSimulatorControl(payload)
 			.then(() => {
 				markFormClean(form);

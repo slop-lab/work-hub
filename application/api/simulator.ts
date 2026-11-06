@@ -12,6 +12,7 @@ const controlSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('termination'), sessionId: z.string(), outcome: z.enum(['completed', 'stopped', 'failed', 'unknown']) }),
   z.strictObject({ type: z.literal('output'), sessionId: z.string(), text: z.string().min(1).max(65536) }),
   z.strictObject({ type: z.literal('gap'), sessionId: z.string(), reason: z.string().min(1).max(512) }),
+  z.strictObject({ type: z.literal('delivery_lookup'), sessionId: z.string(), available: z.boolean() }),
 ]);
 
 export function simulatorRoutes(options: { readonly hub: Hub; readonly actor: (c: Context<ApiEnvironment>) => Actor }) {
@@ -43,6 +44,7 @@ export function simulatorRoutes(options: { readonly hub: Hub; readonly actor: (c
         break;
       case 'output': simulator.controls.emitOutput(session.id, control.text, attempt?.id); break;
       case 'gap': simulator.controls.addHistoryGap(session.id, control.reason); break;
+      case 'delivery_lookup': simulator.controls.setDeliveryLookupAvailable(session.id, control.available); break;
       default: return assertNever(control);
     }
     await hub.reconcile();
