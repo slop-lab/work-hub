@@ -7,7 +7,8 @@ import { Administration, adminCommandSchema } from "../administration/index.ts";
 import { exportSafeRecords } from "../artifacts/export.ts";
 import { ReferenceRepository } from '../artifacts/references.ts';
 import { ExternalCaptureService, type ExternalCapture, type ExternalCaptureRequest,
-  type ExternalCaptureSelection } from '../artifacts/external-capture.ts';
+  type ExternalCaptureSelection, type ExternalContextCapture,
+  type ExternalContextCaptureSelection } from '../artifacts/external-capture.ts';
 import { EventRepository } from '../persistence/events.ts';
 import type { SimulatorCallLog, SimulatorControls, Simulators } from "../simulator/index.ts";
 import { QueryService, type ContextQuery, type TaskListQuery } from "./query-service.ts";
@@ -77,6 +78,12 @@ export class Hub {
   captureExternalReference(actor: Actor, input: ExternalCaptureSelection): ReturnType<ExternalCaptureService['preflight']>;
   captureExternalReference(actor: Actor, input: ExternalCaptureRequest) {
     return 'retainedText' in input ? this.externalCapture.capture(actor, input) : this.externalCapture.preflight(actor, input);
+  }
+  preflightExternalContext(actor: Actor, input: ExternalContextCaptureSelection) {
+    return this.externalCapture.preflightContext(actor, input);
+  }
+  captureExternalContext(actor: Actor, input: ExternalContextCapture) {
+    return this.externalCapture.captureContext(actor, input);
   }
   listTasks(actor: Actor, query: TaskListQuery = {}) { return this.queries.listTasks(actor, query); }
   getRequest(actor: Actor, id: string) { return this.queries.getRequest(actor, id); }

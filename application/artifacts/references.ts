@@ -4,6 +4,7 @@ import { requireProject, type Actor } from '../domain/authorization.ts';
 import { forbidden, invalid } from '../domain/errors.ts';
 import type { Store } from '../persistence/database.ts';
 import { digest, newId, parseJson } from '../persistence/codec.ts';
+import { JsonValueSchema } from '../contracts/common.ts';
 
 export const referenceInput = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('text'), title: z.string().min(1).max(500), content: z.string().min(1).max(131072) }),
@@ -32,11 +33,13 @@ const externalContextSourceSchema = akbSourceReferenceSchema.extend({
   schemaVersion: z.union([z.string().min(1).max(200), z.number().int().nonnegative()]),
   revisionCreatedAt: z.iso.datetime(),
   title: z.string().min(1).max(500),
-  canonicalData: z.json(),
+  canonicalData: JsonValueSchema,
 });
 
 export const externalContextCaptureSchema = externalContextCaptureSelectionSchema.extend({
   contentBytes: z.number().int().nonnegative().max(256 * 1024),
+  sourceWorkspaceId: z.string().min(1).max(200).optional(),
+  contextDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
   sources: z.array(externalContextSourceSchema).min(1).max(25).readonly(),
 }).superRefine((capture, context) => {
   const sourceKeys = new Set(capture.sources.map((source) => `${source.kind}\u0000${source.id}\u0000${source.revision}`));
@@ -124,6 +127,7 @@ export class ReferenceRepository {
         id, actor.workspaceId, capture.taskId, 'text', source.title, 'application/json',
         JSON.stringify({ provider: 'akb', installationId: capture.installationId, kind: source.kind,
           id: source.id, revision: source.revision, schemaVersion: source.schemaVersion,
+          sourceWorkspaceId: capture.sourceWorkspaceId, contextDigest: capture.contextDigest,
           revisionCreatedAt: source.revisionCreatedAt, retainedByHub: true, contentDigest: digest(retainedText) }),
         null, retainedText, 'available', String(source.revision), now, now,
       );
