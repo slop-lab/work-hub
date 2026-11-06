@@ -4,6 +4,14 @@ This continues `docs/verification-followup-20261105.md`. Existing evidence and
 production state are preserved. The private continuation ledger is
 `/home/dim/tasks/verification-results-20261106/work-hub-ledger.md`.
 
+Run build-producing checks to completion before browser verification: the browser
+fixtures serve the candidate's `dist/web` files. A retained concurrent run exposed
+a blank login page while assets were rebuilt and a detached scroll target during
+background refresh. Authentication and timeouts were not relaxed. The screenshot
+setup now performs synchronous native scrolling, and both failed scenarios passed
+in the quiet sequential rerun. Final source/browser results and exact command
+exits are recorded separately in the private ledger.
+
 ## Actual Codex custom-provider execution
 
 The authorized installation command `dim-tools-setup codex` completed successfully.

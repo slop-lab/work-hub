@@ -93,10 +93,12 @@ test("Given active delegated work, when a human asks the scoped agent, then the 
 		await expect(page.getByText("What remains uncertain?").first()).toBeVisible();
 		await expect(page.getByText("Agent inbox · delivery not required", { exact: true })).toBeVisible();
 		await page.setViewportSize({ width: 375, height: 900 });
-		await page.getByText("Agent inbox · delivery not required", { exact: true }).scrollIntoViewIfNeeded();
+		await page.getByText("Agent inbox · delivery not required", { exact: true })
+			.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
 		await page.screenshot({ path: ".omo/evidence/product-ui-final/scoped-agent-request-375.png" });
 		await page.setViewportSize({ width: 1280, height: 900 });
-		await page.getByRole("heading", { name: "Ask a formal question" }).scrollIntoViewIfNeeded();
+		await page.getByRole("heading", { name: "Ask a formal question" })
+			.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
 		await page.screenshot({ path: ".omo/evidence/product-ui-final/scoped-agent-request-1280.png" });
 		const sideEffectsAfter = app.hub.simulator?.calls.list().filter((call) => ["runtime.openSession", "runtime.startAttempt", "runtime.sendInstruction"].includes(call.operationKind)).length;
 		expect(sideEffectsAfter).toBe(sideEffectsBefore);
