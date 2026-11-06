@@ -4,8 +4,10 @@ import { startLiveHub } from './live-hub-fixture.ts';
 
 const model = process.env['WORK_HUB_LIVE_MODEL'];
 const agent = process.env['WORK_HUB_LIVE_AGENT'];
+test.beforeAll(() => {
+  if (!model || !agent) throw new Error('Explicit live browser qualification requires WORK_HUB_LIVE_MODEL and WORK_HUB_LIVE_AGENT.');
+});
 test('browser delegates to actual OpenCode, answers, reconnects and explicitly completes', async ({ page }, testInfo) => {
-  test.skip(!model || !agent, 'Requires an explicitly selected available live model and agent.');
   test.setTimeout(180_000);
   page.setDefaultTimeout(10_000);
   if (!model || !agent) throw new Error('Explicit live selection required');
