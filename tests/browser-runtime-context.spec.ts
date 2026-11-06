@@ -178,7 +178,16 @@ test("existing native attachment requires an explicit runtime profile and discov
 			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
 			await page.getByRole("button", { name: "Attach without starting work", exact: true }).scrollIntoViewIfNeeded();
 			await page.screenshot({ path: `.omo/evidence/product-ui-final/native-attach-${width}.png`, fullPage: true });
-			await page.getByRole("heading", { name: "Attach existing agent session", exact: true }).locator("..").screenshot({ path: `.omo/evidence/product-ui-final/native-attach-panel-${width}.png` });
+			const panel = page.getByRole("heading", { name: "Attach existing agent session", exact: true }).locator("..");
+			await panel.scrollIntoViewIfNeeded();
+			const bounds = await panel.boundingBox();
+			if (bounds === null) throw new TypeError("The native attachment panel must remain visible.");
+			const x = Math.max(0, bounds.x);
+			const y = Math.max(0, bounds.y);
+			await page.screenshot({ path: `.omo/evidence/product-ui-final/native-attach-panel-${width}.png`, clip: {
+				x, y, width: Math.min(bounds.x + bounds.width, width) - x,
+				height: Math.min(bounds.y + bounds.height, 900) - y,
+			} });
 		}
 		await page.getByRole("button", { name: "Attach without starting work", exact: true }).click();
 		expect(attachedBody).toMatchObject({ payload: { profileId: "profile-claude", nativeSession: { installationId: "runtime-claude", kind: "claude-session", id: "native-123" } } });
