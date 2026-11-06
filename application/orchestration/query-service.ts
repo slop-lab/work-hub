@@ -196,7 +196,7 @@ export class QueryService {
       entries: task === undefined ? [] : this.query.entriesForTask(actor.workspaceId, task.id),
       requests,
       responses: this.query.responsesForRequests(actor.workspaceId, requestIds),
-      deliveries: deliveryProblems,
+      deliveries: input.route === 'dashboard' ? deliveryProblems : this.query.deliveries(actor.workspaceId).filter((delivery) => typeof delivery['requestId'] === 'string' && requestIds.includes(delivery['requestId'])),
       sessions, attempts,
       environmentRegistrations: this.environments.listRegistrations(actor.workspaceId).filter((registration) => actor.role === 'administrator' || registration.allowedProjectIds.some((id) => actor.projectIds.includes(id))),
       environmentBindings: bindings,
