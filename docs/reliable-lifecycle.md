@@ -72,6 +72,9 @@ capabilities.
 
 Installing the DIM host plugin and global OpenCode plugin on managed hosts remains an
 operator deployment action. Claude live turns require an explicitly authorized
-account. AKB exact document-context success parsing remains disabled until the owner
-supplies the complete successful response DTO; request, ACL, revision and budget
-failures remain fail-closed.
+account. AKB exact document-context success parsing is qualified against the
+owner-confirmed `4f6b9704c776877c594408e49f944ff169ccf238` contract. Work Hub enforces
+its own application workspace/project/principal/installation mapping and explicit
+Page/Knowledge allowlists; request, ACL, revision and byte-budget failures remain
+fail-closed. See [paired AKB application verification](akb-paired-application-20261106.md)
+for actual-service scope and the remaining saved-selection/proposal limitations.
