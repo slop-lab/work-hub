@@ -39,20 +39,30 @@ npm run quality:rules      # full rule scan only, not the complete CI gate
 npm test                   # behavior, contract and HTTP tests
 npm run test:contracts     # connector conformance
 npm run test:acceptance    # acceptance scenarios
-npm run test:browser       # browser journeys (install Chromium first)
+npm run test:browser       # account-free simulator/wire-provider browser journeys
+npm run test:browser:ci    # clean install, browser + OS dependencies, build, required suite
+npm run test:browser:live  # separate explicit actual-OpenCode qualification
 ```
 
-For browser tests: `npx playwright install chromium`. Tests use temporary data
+For quick browser tests: `npm exec --no -- playwright install chromium`. Tests use temporary data
 directories; do not point test fixtures at a real workspace database.
 On a host with an existing compatible Chromium, set `PLAYWRIGHT_EXECUTABLE_PATH`.
 Browser tests require that browser's normal shared libraries; the core Node tests
 and application service do not require a browser installation.
 
+For the repeatable required browser lane, run `npm run test:browser:ci` from a
+disposable checkout on Ubuntu 24.04 or Debian 12, using the exact Node version in
+`.node-version` and root or passwordless sudo for OS dependencies. The same
+entrypoint is wired into GitHub and DIM source configuration. Missing setup,
+skipped tests, focused tests and failed/flaky results fail the lane. See
+[quality gates](docs/quality-gates.md) for required check names and publication limits.
+
 ## Try the end-to-end simulator flow
 
 For a separately owned, preseeded manual instance of this same UI/API, see
-[isolated UI preview](docs/ui-preview.md). It includes the reachable workspace
-preview URL, private token-file path, scenario click paths and safe lifecycle commands.
+[isolated UI preview](docs/ui-preview.md). It documents scenario click paths,
+safe lifecycle commands and verification boundaries. Obtain current endpoints,
+credential paths and per-run evidence through private operator handoffs.
 
 1. Capture a title in **Backlog**, add context or a formal question, and answer it
    from **Today**. No environment or runtime starts from capture or a question.

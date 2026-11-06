@@ -89,30 +89,32 @@ Do not restart another service to make the port available. Route exposure may
 create a new record rather than updating an existing one; inspect `dim-expose
 list` before repeating it.
 
-For this workspace, the running preview is:
-
-- URL: `https://work-hub--preview.mj-y.com/`
-- Loopback port: `43127`
-- Owned data: `/home/dim/.local/state/work-hub-preview-20261106`
-- Private token path: `/home/dim/.local/state/work-hub-preview-20261106/preview-admin-token`
-- Nonsecret launcher log: `/home/dim/tasks/ui-preview-20261106/preview.log`
-
-The DIM service supervisor currently fails reading its kernel boot identity.
-This preview was launched separately in the background using the same foreground
-CLI. Use the identity-checked `stop` command above, not a broad `service resume`
-or production restart. It is not registered for automatic restart after a workspace
-reboot. Start it again explicitly when needed.
+Keep current endpoints, route IDs, process identities, credential paths, service
+availability and screenshots in the private deployment/review handoff, not this
+procedure. Reuse an existing correctly owned route instead of exposing another.
+Use the supported supervisor only when available; the foreground CLI and checked
+stop command work independently. Never resume or restart unrelated services.
 
 ## Verification
 
 `npm run check` includes strict types, behavior/HTTP tests and the build.
-`npm run test:browser` reuses the existing Chromium runner and temporary real
-application/database fixtures. `tests/preview/browser-preview.spec.ts` adds only
+`npm run test:browser:ci` is the required account-free browser CI command. It
+installs the exact lockfile, matching Chromium and OS dependencies, builds the
+actual application, and runs the simulator project through the existing runner.
+It rejects missing setup, skips, focused tests, empty execution and failed/flaky
+results. Run it in a disposable supported Linux checkout, never the retained
+manual preview's serving checkout. `npm run test:browser` is the already-prepared
+developer shortcut using the same tests and temporary real application/database
+fixtures. `tests/preview/browser-preview.spec.ts` covers
 missing no-result, failed/unknown termination, durable deep-link/reload,
 delivery-recovery and external-mode denial coverage. Other existing journeys
 retain question/review/acceptance checks. These are simulator-backed application
 regressions, **not real-provider qualification**.
 
-External-URL Chromium evidence and a small screenshot set are retained under
-`/home/dim/tasks/ui-preview-20261106/`. No live provider request or login is part
-of preview startup, seeding or browser qualification.
+`npm run test:browser:live` is separate optional actual-service qualification and
+requires explicit native model/agent selection. Simulator CI establishes software
+behavior, not actual Codex/Claude execution, provider accounts, host lifecycle or
+physical/account acceptance. Local results are not accepted remote CI publication
+or human approval. Retain exact candidate/run receipts and screenshots privately.
+No live provider request or login is part of preview startup, seeding or required
+simulator browser CI.

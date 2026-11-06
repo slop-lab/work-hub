@@ -12,7 +12,9 @@ the supported toolchain. Install with `npm ci`; no global QG installation is use
 | `npm run quality:staged` | Rules over staged/index contents, then the same working-tree checks |
 | `npm run quality:rules` | Full QG rule scan only; useful during fixes, not sufficient for CI |
 | `npm run check` | Existing strict TypeScript, Node behavioral tests and browser build |
-| `npm run test:browser` | Existing real-backend browser journeys; requires compatible Chromium |
+| `npm run test:browser` | Prepared-environment simulator/wire-provider browser journeys; excludes actual-service tests |
+| `npm run test:browser:ci` | Shared required browser entrypoint: lockfile install, pinned Chromium plus OS dependencies, build, actual browser journeys and no-skip report validation |
+| `npm run test:browser:live` | Explicit actual-OpenCode browser qualification; missing model/agent selection is a failure, not a pass |
 
 The root `.qg.yaml` uses the supported top-level command check to invoke the
 existing `check` script. This avoids maintaining duplicate test/build definitions
@@ -23,8 +25,18 @@ enabled states, severities and thresholds.
 DIM's existing `source` job in `.dim/ci/runner.yml` still invokes
 `scripts/ci/source.bash`. That script installs the exact lockfile with `npm ci`
 and runs `npm run quality` instead of running the source checks separately.
-The required-job and protected-reference policies are unchanged. Run the same
-entrypoint locally with `bash scripts/ci/source.bash`.
+Run the same source entrypoint locally with `bash scripts/ci/source.bash`.
+The separate `browser` job invokes `scripts/ci/browser.bash`; both names are
+declared required in `.dim/repos.yml` and run by `.github/workflows/ci.yml` for
+push, pull-request and merge-group events. There are no path filters that silently
+omit browser checks for UI changes. GitHub action references use verified full
+commit pins; existing dependency pins and the npm lockfile are unchanged.
+
+The source declarations are reviewable candidate configuration only. A coordinator
+must publish exact-candidate CI, confirm both check identities and review protected
+gate activation. Live protected-ref policy, reviewer requirements and promotion
+are not changed by a local run or workflow commit. A missing runner or pending
+required check blocks acceptance; it is not a green skipped browser lane.
 
 ### Authoritative metadata-free DIM snapshots
 
@@ -59,9 +71,36 @@ rule even beneath an unrelated parent repository. It also verifies the parent
 index and supplied violating file are preserved. The acceptance has a distinct
 filename so its nested full source check cannot recursively invoke itself.
 
-Browser verification stays separate from that source job so CI does not depend
-on a browser runtime or change the workspace's server/session setup. Changes to
-browser-served code should also run the browser suite as described in the README.
+### Required account-free browser lane
+
+Run `bash scripts/ci/browser.bash` or `npm run test:browser:ci` in a disposable
+checkout. Supported runners are Ubuntu 24.04 and Debian 12 with the exact Node
+version in `.node-version`, network access to the npm/Playwright/OS package
+repositories, and root or passwordless sudo for dependency setup. This is software
+CI, not a dependency on a live Work Hub deployment or private provider endpoint.
+
+The entrypoint creates a private temporary HOME, TMPDIR and browser cache, and
+passes an environment allowlist. It does not inherit provider credentials,
+`WORK_HUB_CONNECTIONS`, browser executable overrides or opt-in live-test settings.
+It uses `npm ci`, the lockfile-local Playwright CLI, and `install --with-deps
+chromium`, then builds and runs the existing simulator project. Browser, library
+or download failures stop the command; there is no existing-browser fallback.
+The built UI/API/SQLite fixtures create and remove their own temporary data.
+Do not run the clean-install/build command in a checkout serving retained manual
+preview data; it never needs to touch that preview's directory, auth or ingress.
+
+Playwright forbids focused tests and retries are disabled. Its native JSON report
+must contain at least one executed simulator test, exactly one passed result per
+test, no skips/expected-failures/global errors, and matching positive pass counts.
+The report verifier rejects live-project evidence. Failure screenshots and the
+JSON report live in `test-results/browser-ci/`; GitHub uploads that directory even
+after failures. Missing artifacts fail upload rather than implying a test pass.
+
+The optional actual-provider project is explicitly selected with
+`npm run test:browser:live`; it is never part of the account-free required lane.
+Source checks may still visibly skip optional native-service tests. Such skips do
+not qualify those services. Browser CI does not prove Codex/Claude execution,
+provider login, physical host/VM acceptance, or a human business decision.
 
 ## Scope and findings
 
@@ -135,4 +174,5 @@ adapter, coverage threshold or daemon is required for this integration.
   statement-layout changes. No DOM, UI copy, styles or event behavior changed.
 
 These are local verification results, not a native DIM CI publication or human
-approval. The proposal still requires the normal DIM source job and review.
+approval. Current candidates require both declared source and simulator browser
+jobs plus normal review; exact remote run identities belong in CI/review receipts.

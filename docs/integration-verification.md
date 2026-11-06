@@ -10,19 +10,30 @@ receipts with the CI/review record or private disposable-test evidence.
 | Layer | Surface | What it establishes |
 | --- | --- | --- |
 | Source gate | `bash scripts/ci/source.bash` | Pinned install, QG, strict types, default behavioral tests and build |
+| Simulator browser gate | `bash scripts/ci/browser.bash` or `npm run test:browser:ci` | Account-free actual built web/API/SQLite journeys with deterministic simulator and loopback wire fixtures; browser/dependency setup and no-skip result checks are required |
 | Adapter fixtures | `tests/contracts.opencode.test.ts`, `tests/contracts.opencode-environment.test.ts`, `tests/contracts.dim.test.ts` | Wire mapping, authority and failure semantics, not real host lifecycle |
 | Native OpenCode | Explicit opt-in `tests/live-opencode.test.ts` | Actual disposable native question/answer/result and connector-ledger reopen |
-| Native browser flow | Explicit opt-in `tests/browser-live-opencode.spec.ts` | Work Hub discovery, selection, delegation, waiting, reconnect, answer, continuation, result and human completion |
+| Native browser flow | Explicit `npm run test:browser:live` / `tests/browser-live-opencode.spec.ts` | Work Hub discovery, selection, delegation, waiting, reconnect, answer, continuation, result and human completion against a selected actual service |
 | Transport regressions | `tests/opencode-transport.test.ts` | Whole-response deadlines, caller cancellation and safe stream cleanup |
 | Source export | `tests/source-snapshot.acceptance.ts` | Metadata-free source membership and unchanged QG enforcement |
 | DIM host integration | Separate disposable VM acceptance | Actual host/workspace lifecycle, identity, service access and permitted operations |
 | Other runtimes | Their future adapter conformance and actual-service checks | Claude Code/Codex CLI support; OpenCode results are not evidence for them |
 | Optional AKB context | Scoped actual AKB reads plus captured input checks | Authorized document/revision capture, not Knowledge acceptance |
+| Physical/account acceptance | Separate owner-authorized environment, account and human acceptance | Hardware/host access, provider authentication and deployment authorization; neither source nor simulator browser CI establishes this |
 
 Use the opt-in commands in [runtime integration](live-integration.md). A skipped
 live test is not a live pass. A process being present or an HTTP 204 response is
 not proof of model execution. Idle is not success. Connector-ledger reopen is
 not proof that every provider supports recovery after its own server restart.
+
+Repository-owned GitHub and DIM configuration declare both `source` and `browser`
+lanes. GitHub runs them for pushes, pull requests and merge groups, without path
+filters; DIM declares both as required ordinary-sysbox jobs. The browser lane
+supports Ubuntu 24.04/Debian 12, the exact `.node-version`, and root/passwordless
+sudo for Playwright's OS dependencies. Unsupported or missing setup fails, not
+skips. See [quality gates](quality-gates.md) for the shared entrypoint and required
+publication/review boundary. Source configuration is a candidate for coordinator
+review, not a mutation of live protected-ref policy or an accepted remote CI pass.
 
 ## Task acceptance common to runtimes
 
