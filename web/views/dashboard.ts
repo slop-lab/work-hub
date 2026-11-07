@@ -52,6 +52,9 @@ export function dashboardView(ctx: UiContext): HTMLElement {
 			const actions = el("div", { class: "cluster" });
 			const viewState = ctx.state.userViewState.find((state) => state.attentionKey === item.key);
 			const request = item.requestId === undefined ? undefined : ctx.state.requests.find((candidate) => candidate.id === item.requestId);
+			const task = item.taskId === undefined ? undefined : ctx.state.tasks.find((candidate) => candidate.id === item.taskId);
+			const projectId = item.projectId ?? task?.projectId ?? (request?.recipient.kind === "project_members" ? request.recipient.projectId : undefined);
+			const project = ctx.state.projects.find((candidate) => candidate.id === projectId);
 			if (request !== undefined && request.status === "open") actions.append(answerButton(ctx, request, item.title));
 			if (item.sessionId !== undefined)
 				actions.append(
@@ -69,7 +72,9 @@ export function dashboardView(ctx: UiContext): HTMLElement {
 			if (viewState?.readAt == null) actions.append(button("Mark read", "quiet", () => void ctx.command({ commandId: commandId(), type: "attention.markRead", payload: { attentionKey: item.key } }, "Attention item marked read. Canonical work is unchanged.")));
 			if (viewState?.dismissedAt == null) actions.append(button("Dismiss notice", "quiet", () => void ctx.command({ commandId: commandId(), type: "attention.dismiss", payload: { attentionKey: item.key } }, "Notification dismissed. The unresolved item remains actionable.")));
 			const presentation = el("div", { class: "cluster" }, badge(item.freshness, freshnessTone(item.freshness)), viewState?.readAt != null ? badge("read") : null, viewState?.dismissedAt != null ? badge("notification dismissed") : null);
-			section.append(el("article", { class: "attention-item" }, el("div", { class: "attention-item__top" }, presentation, el("span", { class: "mono" }, item.reasonCode)), el("h3", {}, item.title), el("p", {}, item.context), item.observedAt === undefined ? null : el("p", { class: "muted" }, `Observed ${formatTime(item.observedAt)}`), actions));
+			const projectContext = ctx.state.projects.length > 1 && project !== undefined ? el("p", { class: "snapshot-meta" }, `Project: ${project.name}`) : null;
+			const taskContext = task !== undefined && task.title !== item.title && task.title !== item.context ? el("p", { class: "snapshot-meta" }, `Task: ${task.title}`) : null;
+			section.append(el("article", { class: "attention-item" }, el("div", { class: "attention-item__top" }, presentation, el("span", { class: "mono" }, item.reasonCode)), projectContext, el("h3", {}, item.title), taskContext, el("p", {}, item.context), item.observedAt === undefined ? null : el("p", { class: "muted" }, `Observed ${formatTime(item.observedAt)}`), actions));
 		}
 		grid.append(section);
 	}
