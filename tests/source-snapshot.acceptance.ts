@@ -16,9 +16,11 @@ async function snapshotFixture(ancestor: boolean) {
   const root = await mkdtemp(join(tmpdir(), 'workhub-source-snapshot-'));
   const directory = join(root, 'snapshot');
   const scratch = join(root, 'scratch');
+  const artifacts = join(root, 'artifacts');
   await mkdir(directory);
   await mkdir(scratch);
-  const environment: NodeJS.ProcessEnv = { ...process.env, TMPDIR: scratch };
+  await mkdir(artifacts);
+  const environment: NodeJS.ProcessEnv = { ...process.env, TMPDIR: scratch, DIM_ARTIFACTS_DIR: artifacts };
   for (const key of Object.keys(environment)) if (key.startsWith('GIT_')) delete environment[key];
   environment['GIT_CONFIG_NOSYSTEM'] = '1';
   environment['GIT_CONFIG_GLOBAL'] = '/dev/null';
@@ -34,7 +36,7 @@ async function snapshotFixture(ancestor: boolean) {
     await writeFile(join(root, 'parent-only.txt'), 'parent fixture\n');
     await execute('git', ['-C', root, 'add', 'parent-only.txt'], { env: environment });
   }
-  return { root, directory, scratch, environment, fileCount: files.length,
+  return { root, directory, scratch, artifacts, environment, fileCount: files.length,
     close: () => rm(root, { recursive: true, force: true }) };
 }
 
@@ -59,8 +61,12 @@ test('the complete authoritative metadata-free snapshot passes the actual source
     await assert.rejects(access(join(fixture.directory, '.git')), { code: 'ENOENT' });
     const result = await runSource(fixture);
     assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stdout, /qg check --full/);
-    assert.match(result.stdout, /PASS/);
+    assert.equal(result.stdout, '');
+    const rules = await readFile(join(fixture.artifacts, 'source/rules.log'), 'utf8');
+    assert.match(rules, /qg check --full --rules-only/);
+    assert.match(rules, /PASS/);
+    assert.deepEqual(JSON.parse(await readFile(join(fixture.artifacts, 'source/result.json'), 'utf8')),
+      { schemaVersion: 1, stage: 'check', exitCode: 0 });
     await access(join(fixture.directory, 'dist/web/app.js'));
     await assert.rejects(access(join(fixture.directory, '.git')), { code: 'ENOENT' });
     assert.equal((await readdir(fixture.scratch)).some((name) => name.startsWith('work-hub-source-git.')), false);
