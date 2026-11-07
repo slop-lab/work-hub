@@ -173,24 +173,40 @@ test("existing native attachment requires an explicit runtime profile and discov
 		await expect(nativeSession).toBeVisible();
 		await nativeSession.selectOption("session-verified");
 		await page.locator('select[name="task"]').selectOption({ label: "Attach provider session" });
+		const selectedTask = await page.locator('select[name="task"]').inputValue();
 		for (const width of [375, 768, 1280]) {
 			await page.setViewportSize({ width, height: 900 });
 			await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
-			await page.getByRole("button", { name: "Attach without starting work", exact: true }).scrollIntoViewIfNeeded();
+			if (width === 768) {
+				const previous = await page.getByRole("heading", { name: "Attach existing agent session", exact: true }).locator("..").elementHandle();
+				if (previous === null) throw new TypeError("Attachment form missing before background refresh.");
+				await page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
+				await expect.poll(() => previous.evaluate((element) => element.isConnected)).toBe(false);
+				await previous.dispose();
+			}
+			await expect(profile).toHaveValue("profile-claude");
+			await expect(nativeSession).toHaveValue("session-verified");
+			await expect(page.locator('select[name="task"]')).toHaveValue(selectedTask);
+			const clip = await page.evaluate(() => {
+				const field = document.querySelector<HTMLSelectElement>('select[name="discoveredSession"]');
+				const form = field?.form;
+				const submit = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+				if (!form || !submit) throw new TypeError("The current attachment form must be rendered.");
+				submit.scrollIntoView({ block: "center", behavior: "instant" });
+				const bounds = form.getBoundingClientRect();
+				const x = Math.max(0, bounds.left);
+				const y = Math.max(0, bounds.top);
+				const current = { x, y, width: Math.min(bounds.right, window.innerWidth) - x,
+					height: Math.min(bounds.bottom, window.innerHeight) - y };
+				if (current.width <= 0 || current.height <= 0) throw new TypeError("The attachment form must intersect the viewport.");
+				return current;
+			});
 			await page.screenshot({ path: `.omo/evidence/product-ui-final/native-attach-${width}.png`, fullPage: true });
-			const panel = page.getByRole("heading", { name: "Attach existing agent session", exact: true }).locator("..");
-			await panel.scrollIntoViewIfNeeded();
-			const bounds = await panel.boundingBox();
-			if (bounds === null) throw new TypeError("The native attachment panel must remain visible.");
-			const x = Math.max(0, bounds.x);
-			const y = Math.max(0, bounds.y);
-			await page.screenshot({ path: `.omo/evidence/product-ui-final/native-attach-panel-${width}.png`, clip: {
-				x, y, width: Math.min(bounds.x + bounds.width, width) - x,
-				height: Math.min(bounds.y + bounds.height, 900) - y,
-			} });
+			await page.screenshot({ path: `.omo/evidence/product-ui-final/native-attach-panel-${width}.png`, clip });
 		}
 		await page.getByRole("button", { name: "Attach without starting work", exact: true }).click();
-		expect(attachedBody).toMatchObject({ payload: { profileId: "profile-claude", nativeSession: { installationId: "runtime-claude", kind: "claude-session", id: "native-123" } } });
+		expect(attachedBody).toMatchObject({ type: "session.attach", payload: { profileId: "profile-claude", controlMode: "observe",
+			environment: { mode: "none" }, nativeSession: { installationId: "runtime-claude", kind: "claude-session", id: "native-123" } } });
 		expect(pageErrors).toEqual([]);
 	} finally { await app.close(); }
 });
