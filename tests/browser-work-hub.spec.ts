@@ -294,7 +294,7 @@ test("Given a stale task revision, when save is rejected, then the dirty draft r
 		await page.getByLabel("New task title").fill("Preserve stale draft");
 		await page.getByRole("button", { name: "Add task" }).click();
 		await page.getByRole("button", { name: "Open Preserve stale draft" }).click();
-		await page.getByLabel("Description").fill("Keep this text after the conflict.");
+		await page.getByRole("textbox", { name: "Description", exact: true }).fill("Keep this text after the conflict.");
 		const stateResponse = await page.request.get(`${app.url}/api/v1/state`);
 		const state = z.object({ tasks: z.array(z.object({ id: z.string(), revision: z.number(), title: z.string() })) }).parse(await stateResponse.json());
 		const task = state.tasks.find((item) => item.title === "Preserve stale draft");

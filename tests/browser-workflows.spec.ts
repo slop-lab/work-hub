@@ -48,7 +48,7 @@ test("Given a task, when task fields, comment, and a formal question are submitt
 		await page.getByLabel("New task title").fill("Exercise durable task forms");
 		await page.getByRole("button", { name: "Add task" }).click();
 		await page.getByRole("button", { name: "Open Exercise durable task forms" }).click();
-		await page.getByLabel("Description").fill("Persist every explicit form action.");
+		await page.getByRole("textbox", { name: "Description", exact: true }).fill("Persist every explicit form action.");
 		await page.getByLabel("Priority").selectOption("low");
 		let releaseContext: () => void = () => undefined;
 		const contextRelease = new Promise<void>((resolve) => { releaseContext = resolve; });
