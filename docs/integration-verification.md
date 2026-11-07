@@ -120,8 +120,10 @@ retained tails by default; save a full stream with
 Downloads require a new destination rather than overwriting existing evidence.
 
 The browser EXIT trap exports produced `test-results/browser-ci` files to
-`$DIM_ARTIFACTS_DIR/browser` even when setup or tests fail, preserving the
-original exit code and temporary-state cleanup. The DIM manifest names these
+`$DIM_ARTIFACTS_DIR/browser` even when setup or tests fail, preserving a failed
+command's exit code and temporary-state cleanup. If exporting requested evidence
+fails after a successful command, the job fails rather than accepting missing
+evidence. The DIM manifest names these
 files below `files/browser/`, including the JSON report, failure screenshots and
 error context when produced. The original `test-results/browser-ci` directory
 remains available to GitHub's existing artifact upload. A setup failure before

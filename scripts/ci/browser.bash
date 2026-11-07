@@ -12,7 +12,8 @@ cleanup() {
   trap - EXIT
   if [[ -n "${DIM_ARTIFACTS_DIR:-}" && -d test-results/browser-ci ]]; then
     if ! mkdir -p -- "$DIM_ARTIFACTS_DIR/browser" || ! cp -R -- test-results/browser-ci/. "$DIM_ARTIFACTS_DIR/browser/"; then
-      printf '%s\n' 'Browser CI artifact export failed; original command status is preserved.' >&2
+      printf '%s\n' 'Browser CI artifact export failed.' >&2
+      [[ "$status" != 0 ]] || status=1
     fi
   fi
   rm -rf -- "$state" || printf '%s\n' 'Browser CI temporary-state cleanup failed.' >&2

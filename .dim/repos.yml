@@ -2,6 +2,8 @@ schemaVersion: 1
 repositories:
   main:
     ref: main
+    upstream: {url: https://github.com/slop-lab/work-hub.git, branch: main}
+    publish: {main: main}
     defaultBranch: main
     protect: [main, development]
     branches:

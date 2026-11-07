@@ -35,3 +35,26 @@ process.exit(23);
     assert.equal(readFileSync(join(artifacts, "browser/results.json"), "utf8"), readFileSync(join(source, "test-results/browser-ci/results.json"), "utf8"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+for (const childExit of [0, 23]) {
+  test(`artifact export failure cannot turn child exit ${childExit} into accepted evidence`, () => {
+    const root = mkdtempSync(join(tmpdir(), "work-hub-browser-export-error-"));
+    const source = join(root, "source"), bin = join(root, "bin"), artifacts = join(root, "not-a-directory");
+    mkdirSync(join(source, "scripts/ci"), { recursive: true }); mkdirSync(bin);
+    copyFileSync(resolve("scripts/ci/browser.bash"), join(source, "scripts/ci/browser.bash"));
+    writeFileSync(artifacts, "keep-existing-file");
+    writeFileSync(join(bin, "bash"), `#!${process.execPath}
+import fs from 'node:fs';
+fs.writeFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_NAME, '{}');
+process.exit(${childExit});
+`, { mode: 0o755 });
+    try {
+      const result = spawnSync("/bin/bash", ["scripts/ci/browser.bash"], { cwd: source, encoding: "utf8", env: {
+        ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, DIM_ARTIFACTS_DIR: artifacts,
+      } });
+      assert.equal(result.status, childExit || 1, result.stderr);
+      assert.match(result.stderr, /Browser CI artifact export failed/);
+      assert.equal(readFileSync(artifacts, "utf8"), "keep-existing-file");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
