@@ -129,6 +129,14 @@ error context when produced. The original `test-results/browser-ci` directory
 remains available to GitHub's existing artifact upload. A setup failure before
 Playwright cannot produce a screenshot; inspect its retained stderr instead.
 
+The source lane runs the same QG rules and the strict type/test/build command
+once each, with DIM owning the job runtime limit. Its EXIT trap retains complete
+bootstrap, install, rules and check logs below `files/source/`, plus `result.json`
+with the failed stage and exit code. Success is quiet; failure prints a bounded
+tail while the complete diagnostic log remains downloadable. Requested evidence
+export failure also fails the job. This avoids losing the failing child output
+inside QG's nested command runner.
+
 Repository declarations and these local script tests are **not** proof that the
 live DIM policy or scheduler jobs passed. Record the exact candidate, both
 actual execution IDs, accepted outcomes, downloaded evidence digests and cleanup

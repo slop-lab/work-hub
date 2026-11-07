@@ -65,3 +65,28 @@ test("metadata-free source indexes ignored reviewed inputs before npm creates de
     assert.equal(existsSync(join(value.source, ".git")), false);
   } finally { rmSync(value.root, { recursive: true, force: true }); }
 });
+
+for (const exitCode of [0, 23]) {
+  test(`source CI runs each gate once and retains full diagnostics with exit ${exitCode}`, () => {
+    const value = fixture("24.22.1");
+    try {
+      mkdirSync(join(value.source, "scripts/ci"), { recursive: true });
+      copyFileSync(resolve("scripts/ci/source.bash"), join(value.source, "scripts/ci/source.bash"));
+      copyFileSync(bootstrap, join(value.source, "scripts/ci/bootstrap-node.bash"));
+      const artifacts = join(value.root, "artifacts"), trace = join(value.root, "commands");
+      mkdirSync(artifacts);
+      writeFileSync(join(value.bin, "npm"), '#!/bin/bash\nprintf "%s\\n" "$*" >> "$COMMAND_TRACE"\ncase "$*" in\n"run check") printf "FULL_CHECK_PREFIX\\n"; head -c 70000 /dev/zero | tr "\\0" x; printf "\\nFINAL_CHECK_MARKER\\n"; exit "$CHECK_EXIT";;\n"run quality") printf "opaque checker failure\\n"; exit "$CHECK_EXIT";;\nesac\n', { mode: 0o755 });
+      const result = spawnSync("/bin/bash", ["scripts/ci/source.bash"], { cwd: value.source, encoding: "utf8", env: {
+        ...process.env, PATH: `${value.bin}:${process.env["PATH"] ?? ""}`, DIM_ARTIFACTS_DIR: artifacts,
+        COMMAND_TRACE: trace, CHECK_EXIT: String(exitCode),
+      } });
+      assert.equal(result.status, exitCode, result.stderr);
+      const log = readFileSync(join(artifacts, "source/check.log"), "utf8");
+      assert.match(log, /^FULL_CHECK_PREFIX/); assert.match(log, /FINAL_CHECK_MARKER/);
+      assert.equal(result.stdout.includes("FINAL_CHECK_MARKER"), exitCode !== 0);
+      assert.equal(result.stdout.includes("FULL_CHECK_PREFIX"), false);
+      assert.deepEqual(readFileSync(trace, "utf8").trim().split("\n"), ["ci --no-audit --no-fund", "run quality:rules", "run check"]);
+      assert.deepEqual(JSON.parse(readFileSync(join(artifacts, "source/result.json"), "utf8")), { schemaVersion: 1, stage: "check", exitCode });
+    } finally { rmSync(value.root, { recursive: true, force: true }); }
+  });
+}

@@ -3,9 +3,35 @@ set -euo pipefail
 
 snapshot_git=""
 node_state=""
+diagnostics=""
+stage="bootstrap"
 cleanup() {
   local status=$?
   trap - EXIT
+  if [[ -n "$diagnostics" && -d "$diagnostics" ]]; then
+    if [[ -n "${DIM_ARTIFACTS_DIR:-}" ]]; then
+      if mkdir -p -- "$DIM_ARTIFACTS_DIR/source"; then
+        for log in "$diagnostics"/*.log; do
+          [[ -f "$log" ]] || continue
+          if ! cp -- "$log" "$DIM_ARTIFACTS_DIR/source/"; then
+            printf '%s\n' 'Source CI diagnostic export failed.' >&2
+            [[ "$status" != 0 ]] || status=1
+          fi
+        done
+        if ! printf '{"schemaVersion":1,"stage":"%s","exitCode":%s}\n' "$stage" "$status" > "$DIM_ARTIFACTS_DIR/source/result.json"; then
+          printf '%s\n' 'Source CI result export failed.' >&2
+          [[ "$status" != 0 ]] || status=1
+        fi
+      else
+        printf '%s\n' 'Source CI diagnostic directory export failed.' >&2
+        [[ "$status" != 0 ]] || status=1
+      fi
+    fi
+    if [[ "$status" != 0 && -f "$diagnostics/$stage.log" ]]; then
+      printf '\n[Source CI %s failure: final 65536 bytes; complete log retained as source/%s.log]\n' "$stage" "$stage"
+      tail -c 65536 -- "$diagnostics/$stage.log" || true
+    fi
+  fi
   [[ -z "$node_state" ]] || rm -rf -- "$node_state" || printf '%s\n' 'CI Node temporary-state cleanup failed.' >&2
   [[ -z "$snapshot_git" ]] || rm -rf -- "$snapshot_git" || printf '%s\n' 'CI snapshot-index cleanup failed.' >&2
   exit "$status"
@@ -34,6 +60,15 @@ fi
 # Index the reviewed snapshot before creating tools or npm-derived files.
 source scripts/ci/bootstrap-node.bash
 node_state="$(mktemp -d /tmp/work-hub-source-node.XXXXXX)"
-work_hub_ci_bootstrap_node "$node_state/tools"
-npm ci --no-audit --no-fund
-npm run quality
+diagnostics="$node_state/diagnostics"
+mkdir -- "$diagnostics"
+work_hub_ci_bootstrap_node "$node_state/tools" > "$diagnostics/bootstrap.log" 2>&1
+node --version >> "$diagnostics/bootstrap.log" 2>&1
+stage="install"
+npm ci --no-audit --no-fund > "$diagnostics/install.log" 2>&1
+# Run the same rules and source gates once each. DIM owns this job's runtime
+# bound; keep source failures visible instead of nesting QG's opaque child timer.
+stage="rules"
+npm run quality:rules > "$diagnostics/rules.log" 2>&1
+stage="check"
+npm run check > "$diagnostics/check.log" 2>&1
