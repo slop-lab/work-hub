@@ -7,7 +7,21 @@ if (($# != 0)); then
 fi
 
 state="$(mktemp -d "${TMPDIR:-/tmp}/work-hub-browser-ci.XXXXXX")"
-trap 'rm -rf -- "$state"' EXIT
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [[ -n "${DIM_ARTIFACTS_DIR:-}" && -d test-results/browser-ci ]]; then
+    if ! mkdir -p -- "$DIM_ARTIFACTS_DIR/browser" || ! cp -R -- test-results/browser-ci/. "$DIM_ARTIFACTS_DIR/browser/"; then
+      printf '%s\n' 'Browser CI artifact export failed; original command status is preserved.' >&2
+    fi
+  fi
+  rm -rf -- "$state" || printf '%s\n' 'Browser CI temporary-state cleanup failed.' >&2
+  exit "$status"
+}
+trap cleanup EXIT
+case "$(cd "$state" && pwd -P)/" in
+  "$(pwd -P)/"*) printf '%s\n' 'Browser CI state must remain outside the source checkout.' >&2; exit 2 ;;
+esac
 mkdir -p "$state/home" "$state/tmp" test-results/browser-ci
 
 env -i PATH="$PATH" HOME="$state/home" TMPDIR="$state/tmp" CI=true GIT_MASTER=1 \
@@ -19,11 +33,8 @@ env -i PATH="$PATH" HOME="$state/home" TMPDIR="$state/tmp" CI=true GIT_MASTER=1 
       ubuntu:24.04|debian:12) ;;
       *) printf "%s\n" "Browser CI requires Ubuntu 24.04 or Debian 12 with apt and root/passwordless sudo." >&2; exit 2 ;;
     esac
-    expected_node="$(<.node-version)"
-    if [[ "$(node -p process.versions.node)" != "$expected_node" ]]; then
-      printf "Browser CI requires Node %s from .node-version.\n" "$expected_node" >&2
-      exit 2
-    fi
+    source scripts/ci/bootstrap-node.bash
+    work_hub_ci_bootstrap_node "$HOME/tools"
     node --version
     npm --version
     npm ci --no-audit --no-fund

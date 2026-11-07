@@ -85,3 +85,49 @@ be used as present service discovery.
 This separation does not erase historical evidence: earlier run records remain
 in version history or their original evidence system. It prevents stale instance
 records from becoming permanent product setup or an integration prerequisite.
+
+## Inspecting DIM-scheduled source and browser jobs
+
+Both jobs use the shared project-owned `scripts/ci/bootstrap-node.bash`. An
+already exact Node24.22.1 is reused; a different job-image Node is replaced for
+that job process by the reviewed Linux x64 archive, verified against its fixed
+SHA256. Tools live in private temporary storage outside the source checkout and
+are removed on exit. The job image must provide curl, SHA256, tar/xz and realpath;
+Playwright's OS dependencies still require the supported Ubuntu/Debian job and
+root or passwordless sudo. This does not modify the worker's global tools.
+The source lane indexes the authoritative snapshot before tools or npm generate
+files, retaining the existing metadata-free QG boundary.
+
+From the selected project workspace, commit and push the intended ordinary
+branch, then use the scoped helper:
+
+```sh
+dim-ci request --request-id "$REQUEST_ID" --ref "$CANDIDATE_REF"
+dim-ci status --request-id "$REQUEST_ID"
+dim-ci jobs --request-id "$REQUEST_ID"
+dim-ci logs --request-id "$REQUEST_ID" --job "$EXECUTION_ID"
+dim-ci artifacts --request-id "$REQUEST_ID" --job "$EXECUTION_ID"
+dim-ci download --request-id "$REQUEST_ID" --job "$EXECUTION_ID" --artifact "$ARTIFACT_ID" --output ./browser-failure.png
+```
+
+Use a fresh UUID for `REQUEST_ID`, the exact ordinary branch ref for
+`CANDIDATE_REF`, and the execution UUID returned by `jobs` for the requested
+source or browser job. Choose `ARTIFACT_ID` from that execution's manifest,
+checking its logical name and digest. No shared query/operator credential or
+private connection file belongs in these commands. `logs` displays verified
+retained tails by default; save a full stream with
+`dim-ci logs --request-id "$REQUEST_ID" --job "$EXECUTION_ID" --stream stdout --output ./browser-stdout.log`.
+Downloads require a new destination rather than overwriting existing evidence.
+
+The browser EXIT trap exports produced `test-results/browser-ci` files to
+`$DIM_ARTIFACTS_DIR/browser` even when setup or tests fail, preserving the
+original exit code and temporary-state cleanup. The DIM manifest names these
+files below `files/browser/`, including the JSON report, failure screenshots and
+error context when produced. The original `test-results/browser-ci` directory
+remains available to GitHub's existing artifact upload. A setup failure before
+Playwright cannot produce a screenshot; inspect its retained stderr instead.
+
+Repository declarations and these local script tests are **not** proof that the
+live DIM policy or scheduler jobs passed. Record the exact candidate, both
+actual execution IDs, accepted outcomes, downloaded evidence digests and cleanup
+receipts after the coordinator applies the project policy and executes the jobs.
