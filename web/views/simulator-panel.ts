@@ -1,6 +1,6 @@
 import { sendSimulatorControl } from "../api.ts";
 import { el, findFormValue, label, submitButton } from "../dom.ts";
-import { markFormClean } from "../form-islands.ts";
+import { prepareFormAcknowledgement } from "../form-islands.ts";
 import type { HubSession } from "../state-schema.ts";
 import type { UiContext } from "../ui-context.ts";
 
@@ -53,9 +53,10 @@ export function simulatorPanel(ctx: UiContext, session: HubSession): HTMLElement
 							: kind === "gap"
 								? { type: kind, sessionId: session.id, reason: content }
 								: { type: "output", sessionId: session.id, text: content };
+		const acknowledge = prepareFormAcknowledgement(form);
 		void sendSimulatorControl(payload)
 			.then(() => {
-				markFormClean(form);
+				acknowledge();
 				return ctx.refresh();
 			})
 			.then(() => ctx.notice("Artificial simulator event emitted. This is not live execution evidence.", "warning"))

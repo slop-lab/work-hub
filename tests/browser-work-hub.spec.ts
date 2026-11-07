@@ -32,12 +32,64 @@ test("Given delegated simulated work, when explicit simulator events are emitted
 		await expect(page.getByLabel("Simulated event")).toHaveValue("question");
 		await expect(page.getByLabel("Question route")).toHaveValue("native");
 		await expect(page.getByLabel("Simulator text")).toHaveValue("Choose a release boundary");
-		await page.getByRole("button", { name: "Emit simulated event" }).click();
+		await page.evaluate(() => {
+			const originalFetch = window.fetch;
+			window.fetch = async (...args: Parameters<typeof fetch>) => {
+				const response = await originalFetch(...args);
+				if (response.url.endsWith("/api/v1/simulator/commands")) {
+					window.fetch = originalFetch;
+					setTimeout(() => { document.documentElement.dataset["simulatorAckDrained"] = "true"; }, 0);
+				}
+				return response;
+			};
+		});
+		let releaseAcknowledgement!: () => void;
+		const acknowledgement = new Promise<void>((resolve) => { releaseAcknowledgement = resolve; });
+		let releaseContext!: () => void;
+		const context = new Promise<void>((resolve) => { releaseContext = resolve; });
+		let contextPending!: () => void;
+		const pendingRefresh = new Promise<void>((resolve) => { contextPending = resolve; });
+		let submitted!: () => void;
+		const submission = new Promise<void>((resolve) => { submitted = resolve; });
+		await page.route("**/api/v1/context**", async (route) => { contextPending(); await context; await route.continue(); });
+		await page.route("**/api/v1/simulator/commands", async (route) => {
+			const response = await route.fetch();
+			submitted();
+			await acknowledgement;
+			await route.fulfill({ response });
+		}, { times: 1 });
+		try {
+			await pendingRefresh;
+			const originalForm = await page.getByLabel("Simulated event").evaluateHandle((field: HTMLSelectElement) => field.form!);
+			await page.getByRole("button", { name: "Emit simulated event" }).click();
+			await submission;
+			await page.getByLabel("Simulated event").selectOption("result");
+			await page.getByLabel("Simulator text").fill("Claimed simulator result");
+			await page.getByRole("button", { name: "Log out" }).focus();
+			const completed = page.waitForResponse((response) => response.url().endsWith("/api/v1/simulator/commands"));
+			expect(await originalForm.evaluate((form) => form.isConnected)).toBe(true);
+			releaseAcknowledgement();
+			await completed;
+			// Drain the acknowledgement's promise reactions before allowing the pending refresh to render.
+			await page.waitForFunction(() => document.documentElement.dataset["simulatorAckDrained"] === "true");
+		} finally {
+			releaseAcknowledgement();
+			releaseContext();
+			await page.unrouteAll({ behavior: "wait" });
+		}
+		await expect(page.getByText("Artificial simulator event emitted. This is not live execution evidence.", { exact: true })).toBeVisible();
+		await expect(page.getByLabel("Simulated event")).toHaveValue("result");
+		await expect(page.getByLabel("Simulator text")).toHaveValue("Claimed simulator result");
 		await expect(page.getByRole("region", { name: "Linked requests" })
 			.getByText("Choose a release boundary", { exact: true })).toBeVisible();
-		await page.getByLabel("Simulated event").selectOption("result");
-		await page.getByLabel("Simulator text").fill("Claimed simulator result");
+		let submittedResult!: (payload: unknown) => void;
+		const resultRequest = new Promise<unknown>((resolve) => { submittedResult = resolve; });
+		await page.route("**/api/v1/simulator/commands", async (route) => {
+			submittedResult(route.request().postDataJSON());
+			await route.continue();
+		}, { times: 1 });
 		await page.getByRole("button", { name: "Emit simulated event" }).click();
+		expect(await resultRequest).toEqual({ type: "result", sessionId, summary: "Claimed simulator result" });
 		await expect(page.getByText("Claimed simulator result")).toBeVisible();
 		await expect(page.getByText("result_submitted")).toBeHidden();
 		await page.getByRole("textbox", { name: "Instruction" }).fill("Keep this draft on the ended attempt.");

@@ -111,6 +111,7 @@ export function markDirtyForm(event: Event, identity: string): void {
 	const form = event.target.closest("form");
 	if (!(form instanceof HTMLFormElement)) return;
 	form.dataset["dirty"] = "true";
+	form.dataset["draftIdentity"] = identity;
 	remember(form, identity);
 }
 
@@ -126,6 +127,24 @@ export function markFormClean(form: HTMLFormElement | null, identity?: string): 
 		drafts.delete(storedKey);
 		sessionStorage.removeItem(storageKey(island.identity, island.key));
 	}
+}
+
+/** Acknowledging an older request must not erase a later unsent draft. */
+export function prepareFormAcknowledgement(form: HTMLFormElement): () => void {
+	const identity = form.dataset["draftIdentity"];
+	const submitted = snapshot(form, identity ?? "");
+	return () => {
+		if (submitted === undefined) return;
+		const unchanged = (island: DirtyFormIsland): boolean => JSON.stringify(island.controls) === JSON.stringify(submitted.controls);
+		const current = snapshot(form, identity ?? "");
+		if (current !== undefined && unchanged(current)) delete form.dataset["dirty"];
+		if (identity === undefined) return;
+		const retained = drafts.get(draftKey(identity, submitted.key));
+		if (retained !== undefined && unchanged(retained)) {
+			drafts.delete(draftKey(identity, submitted.key));
+			sessionStorage.removeItem(storageKey(identity, submitted.key));
+		}
+	};
 }
 
 export function clearDirtyForms(): void {
@@ -165,7 +184,10 @@ export function restoreDirtyForms(root: HTMLElement, identity: string, islands: 
 			restored.push(current);
 		}
 		for (const control of restored) control.dispatchEvent(new Event("change"));
-		if (island.dirty) replacement.dataset["dirty"] = "true";
+		if (island.dirty) {
+			replacement.dataset["dirty"] = "true";
+			replacement.dataset["draftIdentity"] = identity;
+		}
 		if (island.focus === undefined) continue;
 		const focused = controls.find((item) => item.key === island.focus?.key)?.control;
 		if (focused === undefined) continue;
