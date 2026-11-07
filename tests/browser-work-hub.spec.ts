@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import { z } from "zod";
 import { startBrowserHub } from "./browser-fixture.ts";
 
+test.use({ trace: "retain-on-failure" });
+
 test("Given delegated simulated work, when explicit simulator events are emitted, then question, result, and termination remain distinct", async ({ page }) => {
 	const app = await startBrowserHub(page);
 	try {
@@ -24,14 +26,68 @@ test("Given delegated simulated work, when explicit simulator events are emitted
 		await page.getByRole("textbox", { name: "Instruction" }).fill("Record an explicit session instruction.");
 		const instructionRefresh = page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
 		await page.getByRole("button", { name: "Send instruction" }).click();
+		console.info("[browser-work-hub phase 1] instruction response");
 		await instructionRefresh;
 		await page.getByLabel("Simulated event").selectOption("question");
 		await expect(page.getByLabel("Question route")).toHaveValue("native");
 		await page.getByLabel("Simulator text").fill("Choose a release boundary");
+		console.info("[browser-work-hub phase 2] context response preserving simulator draft");
 		await page.waitForResponse((response) => response.url().includes("/api/v1/context") && response.request().method() === "GET");
 		await expect(page.getByLabel("Simulated event")).toHaveValue("question");
 		await expect(page.getByLabel("Question route")).toHaveValue("native");
 		await expect(page.getByLabel("Simulator text")).toHaveValue("Choose a release boundary");
+		console.info("[browser-work-hub phase 3] emit selected simulator event");
+		await page.getByRole("button", { name: "Emit simulated event" }).click();
+		await expect(page.getByRole("region", { name: "Linked requests" })
+			.getByText("Choose a release boundary", { exact: true })).toBeVisible();
+		await page.getByLabel("Simulated event").selectOption("result");
+		await page.getByLabel("Simulator text").fill("Claimed simulator result");
+		console.info("[browser-work-hub phase 4] emit selected simulator event");
+		await page.getByRole("button", { name: "Emit simulated event" }).click();
+		await expect(page.getByText("Claimed simulator result")).toBeVisible();
+		await expect(page.getByText("result_submitted")).toBeHidden();
+		await page.getByRole("textbox", { name: "Instruction" }).fill("Keep this draft on the ended attempt.");
+		await page.getByLabel("Simulated event").selectOption("termination");
+		await page.getByLabel("Termination outcome").selectOption("completed");
+		console.info("[browser-work-hub phase 5] emit selected simulator event");
+		await page.getByRole("button", { name: "Emit simulated event" }).click();
+		await expect(page.getByText("finished", { exact: true })).toBeVisible();
+		console.info("[browser-work-hub phase 6] continue ended session");
+		await page.getByRole("button", { name: "Continue session" }).click();
+		await expect(page.getByRole("textbox", { name: "Instruction" })).toHaveValue("");
+		const drafts = await page.evaluate(() => Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.getItem(sessionStorage.key(index) ?? "")));
+		expect(drafts.some((draft) => draft?.includes(oldAttemptId) === true && draft.includes("Keep this draft on the ended attempt."))).toBeTruthy();
+		await page.getByLabel("Simulated event").selectOption("termination");
+		await page.getByLabel("Termination outcome").selectOption("completed");
+		console.info("[browser-work-hub phase 7] emit selected simulator event");
+		await page.getByRole("button", { name: "Emit simulated event" }).click();
+		await expect(page.getByText("finished", { exact: true })).toBeVisible();
+		await page.getByRole("link", { name: "Open task" }).click();
+		await page.getByRole("button", { name: "Complete task" }).last().click();
+		await expect(page.getByText("done", { exact: true })).toBeVisible();
+	} finally {
+		console.info("[browser-work-hub phase 8] close disposable browser application");
+		await app.close();
+	}
+});
+
+test("Given a pending simulator acknowledgement, when the next draft is edited and focus leaves the form, then refresh preserves and submits the new event", async ({ page }) => {
+	const app = await startBrowserHub(page);
+	try {
+		await page.getByRole("link", { name: "Backlog" }).click();
+		await page.getByLabel("New task title").fill("Validate simulator controls");
+		await page.getByRole("button", { name: "Add task" }).click();
+		await page.getByRole("button", { name: "Open Validate simulator controls" }).click();
+		await page.getByRole("button", { name: "Delegate" }).click();
+		await expect(page.getByLabel("Execution profile")).toHaveValue("profile-structured");
+		await page.getByLabel("Environment choice").selectOption("none");
+		await page.getByRole("button", { name: "Confirm delegation" }).click();
+		await page.locator("#main-content").getByRole("link", { name: "Session", exact: true }).click();
+		const sessionId = page.url().split("/").at(-1);
+		if (sessionId === undefined) throw new TypeError("Session route missing its ID");
+		await page.getByText("Simulator scenario").click();
+		await page.getByLabel("Simulated event").selectOption("question");
+		await page.getByLabel("Simulator text").fill("Choose a release boundary");
 		await page.evaluate(() => {
 			const originalFetch = window.fetch;
 			window.fetch = async (...args: Parameters<typeof fetch>) => {
@@ -59,9 +115,12 @@ test("Given delegated simulated work, when explicit simulator events are emitted
 			await route.fulfill({ response });
 		}, { times: 1 });
 		try {
+			console.info("[browser-work-hub phase 9] pending background context request");
 			await pendingRefresh;
 			const originalForm = await page.getByLabel("Simulated event").evaluateHandle((field: HTMLSelectElement) => field.form!);
+			console.info("[browser-work-hub phase 10] emit selected simulator event");
 			await page.getByRole("button", { name: "Emit simulated event" }).click();
+			console.info("[browser-work-hub phase 11] backend simulator command effect");
 			await submission;
 			await page.getByLabel("Simulated event").selectOption("result");
 			await page.getByLabel("Simulator text").fill("Claimed simulator result");
@@ -69,12 +128,15 @@ test("Given delegated simulated work, when explicit simulator events are emitted
 			const completed = page.waitForResponse((response) => response.url().endsWith("/api/v1/simulator/commands"));
 			expect(await originalForm.evaluate((form) => form.isConnected)).toBe(true);
 			releaseAcknowledgement();
+			console.info("[browser-work-hub phase 12] simulator acknowledgement response");
 			await completed;
 			// Drain the acknowledgement's promise reactions before allowing the pending refresh to render.
+			console.info("[browser-work-hub phase 13] simulator fetch acknowledgement reactions");
 			await page.waitForFunction(() => document.documentElement.dataset["simulatorAckDrained"] === "true");
 		} finally {
 			releaseAcknowledgement();
 			releaseContext();
+			console.info("[browser-work-hub phase 14] released context routes");
 			await page.unrouteAll({ behavior: "wait" });
 		}
 		await expect(page.getByText("Artificial simulator event emitted. This is not live execution evidence.", { exact: true })).toBeVisible();
@@ -88,27 +150,12 @@ test("Given delegated simulated work, when explicit simulator events are emitted
 			submittedResult(route.request().postDataJSON());
 			await route.continue();
 		}, { times: 1 });
+		console.info("[browser-work-hub phase 15] emit selected simulator event");
 		await page.getByRole("button", { name: "Emit simulated event" }).click();
 		expect(await resultRequest).toEqual({ type: "result", sessionId, summary: "Claimed simulator result" });
 		await expect(page.getByText("Claimed simulator result")).toBeVisible();
-		await expect(page.getByText("result_submitted")).toBeHidden();
-		await page.getByRole("textbox", { name: "Instruction" }).fill("Keep this draft on the ended attempt.");
-		await page.getByLabel("Simulated event").selectOption("termination");
-		await page.getByLabel("Termination outcome").selectOption("completed");
-		await page.getByRole("button", { name: "Emit simulated event" }).click();
-		await expect(page.getByText("finished", { exact: true })).toBeVisible();
-		await page.getByRole("button", { name: "Continue session" }).click();
-		await expect(page.getByRole("textbox", { name: "Instruction" })).toHaveValue("");
-		const drafts = await page.evaluate(() => Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.getItem(sessionStorage.key(index) ?? "")));
-		expect(drafts.some((draft) => draft?.includes(oldAttemptId) === true && draft.includes("Keep this draft on the ended attempt."))).toBeTruthy();
-		await page.getByLabel("Simulated event").selectOption("termination");
-		await page.getByLabel("Termination outcome").selectOption("completed");
-		await page.getByRole("button", { name: "Emit simulated event" }).click();
-		await expect(page.getByText("finished", { exact: true })).toBeVisible();
-		await page.getByRole("link", { name: "Open task" }).click();
-		await page.getByRole("button", { name: "Complete task" }).last().click();
-		await expect(page.getByText("done", { exact: true })).toBeVisible();
 	} finally {
+		console.info("[browser-work-hub phase 16] close disposable browser application");
 		await app.close();
 	}
 });
