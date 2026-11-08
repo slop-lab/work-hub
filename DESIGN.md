@@ -138,6 +138,7 @@ Base unit: 4px.
 
 ### Attention Group
 - **Structure:** decision-oriented heading, count, actionable items, empty copy.
+- **Context:** when multiple projects are visible, each known project is named separately from the decision prompt. Preserve task context when a reason displaces its title; never infer an unavailable project or fabricate progress percentages.
 - **States:** populated, empty, stale, delivery problem.
 - **Layout:** intrinsic grid; items use links/buttons rather than clickable divs.
 

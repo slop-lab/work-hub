@@ -77,6 +77,7 @@ const attentionItemSchema = z.object({
 	kind: z.string(),
 	title: z.string(),
 	context: z.string(),
+	projectId: id.optional(),
 	taskId: id.optional(),
 	sessionId: id.optional(),
 	requestId: id.optional(),
