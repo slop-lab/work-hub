@@ -34,7 +34,7 @@ export function presentState({ snapshot, actor, administration, output = [], sim
   const attentionRequest = (request: RequestView) => ({
     key: `${request.kind}:${request.id}:${request.revision}`,
     kind: request.kind === 'approval' ? 'approval_needed' : 'answer_needed',
-    title: request.prompt, context: request.reason ?? taskTitle(request.taskId),
+    title: request.prompt, context: request.reason ?? taskTitle(request.taskId), projectId: request.projectId,
     ...(request.taskId ? { taskId: request.taskId } : {}),
     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
     requestId: request.id, freshness: 'fresh' as const, reasonCode: request.blocking,
@@ -101,8 +101,10 @@ export function presentState({ snapshot, actor, administration, output = [], sim
       approvalNeeded: snapshot.dashboard.approvalNeeded.map(attentionRequest),
       responseDelivery: snapshot.dashboard.deliveryProblems.map((problem, index) => ({ key: `delivery:${String(problem['id'] ?? index)}`, kind: 'response_delivery', title: 'Answer saved; delivery needs attention', context: String(problem['status'] ?? 'unknown'), freshness: 'unknown', reasonCode: 'response_delivery_unconfirmed',
         observedAt: String(problem['updatedAt'] ?? new Date().toISOString()), availableActions: ['operation.reconcile'], ...(typeof problem['requestId'] === 'string' ? { requestId: problem['requestId'] } : {}), ...(typeof problem['operationId'] === 'string' ? { operationId: problem['operationId'] } : {}) })),
-      activeWork: active.map((attempt) => ({ key: `attempt:${attempt.id}:${attempt.updatedAt}`, kind: 'active_work', title: taskTitle(attempt.taskId), context: `${attempt.phase}; observation ${attempt.observation}`, taskId: attempt.taskId, sessionId: attempt.sessionId, freshness: attempt.observation, reasonCode: attempt.phase, observedAt: attempt.updatedAt, availableActions: attempt.role === 'primary' ? ['session.instruct', 'attempt.stop'] : [] })),
-      resultReview: review.map((result) => ({ key: `result:${result.id}`, kind: 'result_review', title: taskTitle(result.taskId), context: result.summary, taskId: result.taskId, resultId: result.id, freshness: 'fresh', reasonCode: 'result_submitted', availableActions: ['task.setStatus', 'task.requestRevision'] })),
+      activeWork: active.map((attempt) => ({ key: `attempt:${attempt.id}:${attempt.updatedAt}`, kind: 'active_work', title: taskTitle(attempt.taskId), context: `${attempt.phase}; observation ${attempt.observation}`, projectId: snapshot.tasks.find((task) => task.id === attempt.taskId)?.projectId,
+        taskId: attempt.taskId, sessionId: attempt.sessionId, freshness: attempt.observation, reasonCode: attempt.phase, observedAt: attempt.updatedAt, availableActions: attempt.role === 'primary' ? ['session.instruct', 'attempt.stop'] : [] })),
+      resultReview: review.map((result) => ({ key: `result:${result.id}`, kind: 'result_review', title: taskTitle(result.taskId), context: result.summary, projectId: snapshot.tasks.find((task) => task.id === result.taskId)?.projectId,
+        taskId: result.taskId, resultId: result.id, freshness: 'fresh', reasonCode: 'result_submitted', availableActions: ['task.setStatus', 'task.requestRevision'] })),
       operationalIssues: snapshot.dashboard.operationalIssues.map((issue, index) => {
         const operation = presentHistory(snapshot).operations.find((candidate) => candidate.id === issue['id']);
         return { key: `issue:${String(issue['id'] ?? index)}`, kind: 'operational_issue', title: operation?.error?.message ?? 'Connection needs attention', context: `${String(issue['operationKind'] ?? 'External operation')} at ${String(issue['stage'] ?? 'unknown stage')}`, freshness: 'unknown' as const,
